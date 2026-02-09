@@ -1,0 +1,7 @@
+{
+  "name": "PoultryPro AI",
+  "description": "A professional AI-powered farm management system for tracking poultry expenses, inventory, flock health, and weight metrics.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
