@@ -1,6 +1,6 @@
 {
   "name": "PoultryPro AI",
-  "description": "A professional AI-powered farm management system for tracking poultry expenses, inventory, flock health, and weight metrics.",
+  "description": "মুরগির খামারের খরচ, ইনভেন্টরি, পালের স্বাস্থ্য এবং ওজনের মেট্রিক্স ট্র্যাক করার জন্য একটি পেশাদার এআই-চালিত খামার ব্যবস্থাপনা সিস্টেম।",
   "requestFramePermissions": [
     "camera"
   ]
