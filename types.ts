@@ -23,6 +23,7 @@ export interface Transaction {
   description: string;
   quantity?: number;
   unit?: string;
+  flock_id?: string;
 }
 
 export interface FeedLog {
@@ -74,4 +75,11 @@ export interface FarmState {
   transactions: Transaction[];
   flocks: FlockRecord[];
   inventory: InventoryItem[];
+}
+
+export interface UserAccount {
+  username: string;
+  password?: string;
+  name: string;
+  profilePic?: string; // base64
 }
