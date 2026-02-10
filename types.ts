@@ -30,14 +30,15 @@ export interface FeedLog {
   date: string;
   amount: number;
   unit: string;
+  flock_id?: string;
 }
 
 export interface FlockRecord {
   id: string;
-  batchName: string;
-  startDate: string;
-  initialCount: number;
-  currentCount: number;
+  batch_name: string;
+  start_date: string;
+  initial_count: number;
+  current_count: number;
   breed: string;
   weightLogs: WeightLog[];
   mortalityLogs: MortalityLog[];
@@ -47,8 +48,9 @@ export interface FlockRecord {
 export interface WeightLog {
   id: string;
   date: string;
-  averageWeight: number; // in grams
-  sampleSize: number;
+  average_weight: number; 
+  sample_size: number;
+  flock_id?: string;
 }
 
 export interface MortalityLog {
@@ -56,15 +58,16 @@ export interface MortalityLog {
   date: string;
   count: number;
   reason?: string;
+  flock_id?: string;
 }
 
 export interface InventoryItem {
   id: string;
   name: string;
   category: Category.FEED | Category.MEDICINE;
-  currentQuantity: number;
+  current_quantity: number;
   unit: string;
-  minThreshold: number;
+  min_threshold: number;
 }
 
 export interface FarmState {
