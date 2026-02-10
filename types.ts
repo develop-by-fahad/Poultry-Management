@@ -36,10 +36,10 @@ export interface FeedLog {
 
 export interface FlockRecord {
   id: string;
-  batch_name: string;
-  start_date: string;
-  initial_count: number;
-  current_count: number;
+  batchName: string; // Matches Supabase "batchName"
+  startDate: string; // Matches Supabase "startDate"
+  initialCount: number; // Matches Supabase "initialCount"
+  currentCount: number; // Matches Supabase "currentCount"
   breed: string;
   weightLogs: WeightLog[];
   mortalityLogs: MortalityLog[];
@@ -49,8 +49,8 @@ export interface FlockRecord {
 export interface WeightLog {
   id: string;
   date: string;
-  average_weight: number; 
-  sample_size: number;
+  averageWeight: number; // Matches Supabase "averageWeight"
+  sampleSize: number; // Matches Supabase "sampleSize"
   flock_id?: string;
 }
 
@@ -66,9 +66,9 @@ export interface InventoryItem {
   id: string;
   name: string;
   category: Category.FEED | Category.MEDICINE;
-  current_quantity: number;
+  currentQuantity: number; // Matches Supabase "currentQuantity"
   unit: string;
-  min_threshold: number;
+  minThreshold: number; // Matches Supabase "minThreshold"
 }
 
 export interface FarmState {
@@ -78,8 +78,8 @@ export interface FarmState {
 }
 
 export interface UserAccount {
+  id: string;
   username: string;
-  password?: string;
   name: string;
-  profilePic?: string; // base64
+  profilePic?: string; // stored in auth metadata or base64
 }

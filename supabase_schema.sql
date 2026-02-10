@@ -1,7 +1,19 @@
 
--- PoultryPro AI - Full Supabase Database Schema
+-- PoultryPro AI - Complete Database Schema & Initial Data
 
--- ১. আর্থিক লেনদেনের টেবিল (Transactions Table)
+-- ১. মুরগির ব্যাচ টেবিল (Flocks Table)
+CREATE TABLE IF NOT EXISTS flocks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) DEFAULT auth.uid(),
+    "batchName" TEXT NOT NULL,
+    "startDate" DATE NOT NULL DEFAULT CURRENT_DATE,
+    "initialCount" INTEGER NOT NULL DEFAULT 0,
+    "currentCount" INTEGER NOT NULL DEFAULT 0,
+    breed TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ২. আর্থিক লেনদেনের টেবিল (Transactions Table)
 CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES auth.users(id) DEFAULT auth.uid(),
@@ -12,19 +24,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     description TEXT,
     quantity NUMERIC,
     unit TEXT,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-
--- ২. মুরগির ব্যাচ টেবিল (Flocks Table)
--- Note: Double quotes are used to maintain camelCase as expected by the frontend
-CREATE TABLE IF NOT EXISTS flocks (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES auth.users(id) DEFAULT auth.uid(),
-    "batchName" TEXT NOT NULL,
-    "startDate" DATE NOT NULL DEFAULT CURRENT_DATE,
-    "initialCount" INTEGER NOT NULL DEFAULT 0,
-    "currentCount" INTEGER NOT NULL DEFAULT 0,
-    breed TEXT,
+    flock_id UUID REFERENCES flocks(id) ON DELETE SET NULL, -- ব্যাচের সাথে লিঙ্কিং
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS feed_logs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Row Level Security (RLS) Enable করা
+-- RLS Enable করা
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE flocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inventory ENABLE ROW LEVEL SECURITY;
@@ -78,44 +78,17 @@ ALTER TABLE weight_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mortality_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feed_logs ENABLE ROW LEVEL SECURITY;
 
--- পলিসি তৈরি (ইউজার শুধুমাত্র নিজের ডাটা এক্সেস করতে পারবে)
+-- পলিসি তৈরি (যাতে ইউজার শুধু নিজের ডেটা দেখতে পায়)
+CREATE POLICY "Manage own transactions" ON transactions FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Manage own flocks" ON flocks FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Manage own inventory" ON inventory FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Manage own weight logs" ON weight_logs FOR ALL USING (EXISTS (SELECT 1 FROM flocks WHERE flocks.id = weight_logs.flock_id AND flocks.user_id = auth.uid()));
+CREATE POLICY "Manage own mortality logs" ON mortality_logs FOR ALL USING (EXISTS (SELECT 1 FROM flocks WHERE flocks.id = mortality_logs.flock_id AND flocks.user_id = auth.uid()));
+CREATE POLICY "Manage own feed logs" ON feed_logs FOR ALL USING (EXISTS (SELECT 1 FROM flocks WHERE flocks.id = feed_logs.flock_id AND flocks.user_id = auth.uid()));
 
--- Transactions policies
-CREATE POLICY "Users can manage their own transactions" ON transactions
-    FOR ALL USING (auth.uid() = user_id);
+-- ডামি এন্ট্রি (নমুনা ডেটা) - আপনার প্রথমবার ব্যবহারের সুবিধার্থে
+-- নোট: আপনি অ্যাপে লগইন করার পর সরাসরি অ্যাপ থেকেই ডেটা দিতে পারবেন।
 
--- Flocks policies
-CREATE POLICY "Users can manage their own flocks" ON flocks
-    FOR ALL USING (auth.uid() = user_id);
-
--- Inventory policies
-CREATE POLICY "Users can manage their own inventory" ON inventory
-    FOR ALL USING (auth.uid() = user_id);
-
--- Logs policies (Flock মালিকানা চেক করে)
-CREATE POLICY "Users can manage weight logs of their flocks" ON weight_logs
-    FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM flocks 
-            WHERE flocks.id = weight_logs.flock_id 
-            AND flocks.user_id = auth.uid()
-        )
-    );
-
-CREATE POLICY "Users can manage mortality logs of their flocks" ON mortality_logs
-    FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM flocks 
-            WHERE flocks.id = mortality_logs.flock_id 
-            AND flocks.user_id = auth.uid()
-        )
-    );
-
-CREATE POLICY "Users can manage feed logs of their flocks" ON feed_logs
-    FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM flocks 
-            WHERE flocks.id = feed_logs.flock_id 
-            AND flocks.user_id = auth.uid()
-        )
-    );
+-- ইনভেন্টরিতে কিছু ফিড যোগ করা
+-- INSERT INTO inventory (name, category, "currentQuantity", unit, "minThreshold") 
+-- VALUES ('স্টার্টার ফিড', 'FEED', 10, 'ব্যাগ', 2);
