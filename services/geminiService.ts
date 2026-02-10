@@ -11,14 +11,15 @@ export const getFarmInsights = async (farmData: FarmState) => {
     নিম্নলিখিত পোল্ট্রি খামারের ডেটা বিশ্লেষণ করুন এবং কৌশলগত পরামর্শ প্রদান করুন। অবশ্যই সব উত্তর বাংলা ভাষায় হতে হবে।
     Current Data Summary:
     - Transactions: ${JSON.stringify(farmData.transactions.slice(-20))}
-    - Active Flocks: ${JSON.stringify(farmData.flocks)}
+    - Active Flocks (including weight, mortality, and feed logs): ${JSON.stringify(farmData.flocks)}
     - Inventory: ${JSON.stringify(farmData.inventory)}
 
     নিচের বিষয়গুলোতে ফোকাস করুন:
     ১. আর্থিক অবস্থা (লাভ/ক্ষতির প্রবণতা)।
     ২. সম্ভব হলে ফিড কনভার্সন রেশিও (FCR) অনুমান করুন।
-    ৩. স্বাস্থ্য সতর্কতা (মুরগির মৃত্যুর হার বৃদ্ধি)।
-    ৪. ইনভেন্টরি ম্যানেজমেন্ট (স্টক কমে যাওয়ার সতর্কতা)।
+    ৩. স্বাস্থ্য সতর্কতা (মুরগির মৃত্যুর হার এবং সম্ভাব্য কারণ বিশ্লেষণ)।
+    ৪. ইনভেন্টরি ম্যানেজমেন্ট (ফিড এবং ওষুধের স্টক কমে যাওয়ার সতর্কতা)।
+    ৫. পরবর্তী সপ্তাহের জন্য খামারির জন্য প্রধান ৩টি লক্ষ্য।
     
     Response must be in Bengali and follow this JSON structure with 'summary', 'warnings', and 'recommendations' keys.
   `;
@@ -52,7 +53,6 @@ export const getFarmInsights = async (farmData: FarmState) => {
       }
     });
 
-    // Access .text property directly (not as a method) and trim it
     const jsonStr = (response.text || '{}').trim();
     return JSON.parse(jsonStr);
   } catch (error) {

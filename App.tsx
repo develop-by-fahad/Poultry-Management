@@ -29,7 +29,11 @@ import {
   Settings,
   ShieldCheck,
   Camera,
-  Upload
+  Upload,
+  WifiOff,
+  DatabaseBackup,
+  Skull,
+  UtensilsCrossed
 } from 'lucide-react';
 import { 
   XAxis, 
@@ -40,7 +44,7 @@ import {
   AreaChart, 
   Area
 } from 'recharts';
-import { FarmState, TransactionType, Category, Transaction, FlockRecord, InventoryItem, WeightLog } from './types';
+import { FarmState, TransactionType, Category, Transaction, FlockRecord, InventoryItem, WeightLog, MortalityLog, FeedLog } from './types';
 import { getFarmInsights } from './services/geminiService';
 import { supabase } from './lib/supabase';
 
@@ -60,10 +64,9 @@ const TAB_NAMES = {
   transactions: 'আর্থিক হিসাব',
   inventory: 'ইনভেন্টরি',
   ai: 'এআই পরামর্শ',
-  profile: 'প্রোফাইল সেটিংস'
+  profile: 'প্রোফাইল সেটিিংস'
 };
 
-// Helper for image conversion
 const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -74,14 +77,20 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
 };
 
 // --- AUTH COMPONENT ---
-const Auth: React.FC<{ onAuthSuccess: () => void }> = ({ onAuthSuccess }) => {
+const Auth: React.FC<{ onAuthSuccess: () => void, onEnterLocalMode: () => void, serverError?: string | null }> = ({ onAuthSuccess, onEnterLocalMode, serverError }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [gender, setGender] = useState<'male' | 'female'>('male');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<{ message: string, type: 'limit' | 'other' } | null>(null);
+  const [error, setError] = useState<{ message: string, type: 'limit' | 'fetch' | 'other' } | null>(null);
+
+  useEffect(() => {
+    if (serverError) {
+      setError({ message: serverError, type: 'fetch' });
+    }
+  }, [serverError]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +102,7 @@ const Auth: React.FC<{ onAuthSuccess: () => void }> = ({ onAuthSuccess }) => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.auth.signUp({ 
+        const { error } = await supabase.auth.signUp({ 
           email, 
           password,
           options: {
@@ -108,14 +117,16 @@ const Auth: React.FC<{ onAuthSuccess: () => void }> = ({ onAuthSuccess }) => {
       }
       onAuthSuccess();
     } catch (err: any) {
-      console.error("Auth error details:", err);
-      if (err.message?.toLowerCase().includes('rate limit')) {
+      const msg = err.message?.toLowerCase() || '';
+      if (msg.includes('failed to fetch') || msg.includes('network')) {
         setError({ 
-          message: 'অতিরিক্ত বার চেষ্টা করা হয়েছে। সুপাবেসের নিরাপত্তা সীমার কারণে আপনার একাউন্ট তৈরিতে বাধা দেওয়া হচ্ছে। দয়া করে ১ ঘণ্টা পর পুনরায় চেষ্টা করুন অথবা অন্য ইমেইল ব্যবহার করুন।', 
-          type: 'limit' 
+          message: 'সার্ভারের সাথে যোগাযোগ করা যাচ্ছে না। আপনার ইন্টারনেট চেক করুন অথবা লোকাল মোডে খামার ম্যানেজ করুন।', 
+          type: 'fetch' 
         });
+      } else if (msg.includes('rate limit')) {
+        setError({ message: 'অতিরিক্ত বার চেষ্টা করা হয়েছে। দয়া করে কিছুক্ষণ পর পুনরায় চেষ্টা করুন।', type: 'limit' });
       } else {
-        setError({ message: err.message || 'একটি সমস্যা হয়েছে। আবার চেষ্টা করুন।', type: 'other' });
+        setError({ message: err.message || 'লগইন করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।', type: 'other' });
       }
     } finally {
       setLoading(false);
@@ -133,52 +144,58 @@ const Auth: React.FC<{ onAuthSuccess: () => void }> = ({ onAuthSuccess }) => {
         <h2 className="text-2xl font-bold text-center text-slate-800 mb-2">
           {isLogin ? 'পোল্ট্রিপ্রো-তে লগইন করুন' : 'নতুন একাউন্ট খুলুন'}
         </h2>
-        <p className="text-center text-slate-500 text-sm mb-8">
-          আপনার খামার ব্যবস্থাপনাকে করুন আরো সহজ
-        </p>
-
+        
         {error && (
-          <div className={`p-4 rounded-2xl text-sm mb-6 flex items-start gap-3 border shadow-sm ${error.type === 'limit' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
-            {error.type === 'limit' ? <Clock size={20} className="shrink-0 mt-1" /> : <AlertCircle size={20} className="shrink-0 mt-1" />}
-            <span className="font-medium">{error.message}</span>
+          <div className={`p-4 rounded-2xl text-sm mb-6 flex items-start gap-3 border shadow-sm ${error.type === 'fetch' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
+            <AlertCircle size={20} className="shrink-0 mt-1" />
+            <div className="flex-1">
+              <span className="font-bold block mb-1">{error.type === 'fetch' ? 'কানেকশন এরর' : 'সমস্যা'}</span>
+              <span>{error.message}</span>
+              {error.type === 'fetch' && (
+                <button onClick={onEnterLocalMode} className="mt-2 block font-black underline hover:text-blue-900 transition-colors">লোকাল মোডে প্রবেশ করুন (অফলাইন)</button>
+              )}
+            </div>
           </div>
         )}
 
         <form onSubmit={handleAuth} className="space-y-4">
           {!isLogin && (
-            <>
+            <div className="space-y-4">
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-400 uppercase ml-1">আপনার নাম</label>
-                <input required type="text" className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" placeholder="উদাঃ আব্দুর রহমান" value={name} onChange={e => setName(e.target.value)} />
+                <input required type="text" className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" value={name} onChange={e => setName(e.target.value)} />
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-400 uppercase ml-1">লিঙ্গ</label>
                 <div className="flex gap-4">
-                  <button type="button" onClick={() => setGender('male')} className={`flex-1 py-3 rounded-xl border font-bold text-sm transition-all ${gender === 'male' ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'}`}>পুরুষ (Male)</button>
-                  <button type="button" onClick={() => setGender('female')} className={`flex-1 py-3 rounded-xl border font-bold text-sm transition-all ${gender === 'female' ? 'bg-pink-50 border-pink-500 text-pink-700' : 'bg-white border-slate-200 text-slate-500'}`}>মহিলা (Female)</button>
+                  <button type="button" onClick={() => setGender('male')} className={`flex-1 py-3 rounded-xl border font-bold text-sm transition-all ${gender === 'male' ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'}`}>পুরুষ</button>
+                  <button type="button" onClick={() => setGender('female')} className={`flex-1 py-3 rounded-xl border font-bold text-sm transition-all ${gender === 'female' ? 'bg-pink-50 border-pink-500 text-pink-700' : 'bg-white border-slate-200 text-slate-500'}`}>মহিলা</button>
                 </div>
               </div>
-            </>
+            </div>
           )}
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-400 uppercase ml-1">ইমেইল</label>
-            <input required type="email" className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" placeholder="example@mail.com" value={email} onChange={e => setEmail(e.target.value)} />
+            <input required type="email" className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" value={email} onChange={e => setEmail(e.target.value)} />
           </div>
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-400 uppercase ml-1">পাসওয়ার্ড</label>
-            <input required type="password" minLength={6} className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+            <input required type="password" minLength={6} className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all" value={password} onChange={e => setPassword(e.target.value)} />
           </div>
 
           <button disabled={loading} type="submit" className="w-full py-4 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center justify-center gap-2">
-            {loading ? <Loader2 className="animate-spin" size={20} /> : (isLogin ? <LogIn size={20} /> : <UserPlus size={20} />)}
+            {loading ? <Loader2 className="animate-spin" size={20} /> : <LogIn size={20} />}
             {isLogin ? 'লগইন করুন' : 'একাউন্ট তৈরি করুন'}
           </button>
         </form>
 
-        <div className="mt-8 text-center">
-          <button onClick={() => { setIsLogin(!isLogin); setError(null); }} className="text-emerald-600 text-sm font-bold hover:underline transition-all">
+        <div className="mt-8 text-center space-y-4">
+          <button onClick={() => { setIsLogin(!isLogin); setError(null); }} className="text-emerald-600 text-sm font-bold hover:underline block w-full">
             {isLogin ? 'নতুন একাউন্ট নেই? এখানে ক্লিক করুন' : 'ইতিমধ্যে একাউন্ট আছে? লগইন করুন'}
           </button>
+          <div className="pt-4 border-t border-slate-100">
+            <button onClick={onEnterLocalMode} className="text-slate-400 text-xs font-bold hover:text-slate-600">লগইন ছাড়াই ব্যবহার করুন (লোকাল মোড)</button>
+          </div>
         </div>
       </div>
     </div>
@@ -221,12 +238,9 @@ const ProfileView: React.FC<{ profile: { name: string, gender: string, email: st
   };
 
   return (
-    <div className="max-w-2xl mx-auto animate-in fade-in duration-500">
+    <div className="max-w-2xl mx-auto animate-in fade-in duration-500 font-['Hind_Siliguri',_sans-serif]">
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-8 text-white relative">
-           <div className="absolute top-0 right-0 p-8 opacity-20">
-              <Settings size={80} className="animate-spin-slow" />
-           </div>
            <h3 className="text-2xl font-bold mb-1">প্রোফাইল সেটিংস</h3>
            <p className="text-emerald-100 text-sm">আপনার ব্যক্তিগত তথ্য এবং ছবি পরিবর্তন করুন</p>
         </div>
@@ -234,7 +248,6 @@ const ProfileView: React.FC<{ profile: { name: string, gender: string, email: st
         <div className="p-8">
           {message && (
             <div className={`p-4 rounded-2xl text-sm mb-6 flex items-center gap-3 border ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
-              {message.type === 'success' ? <ShieldCheck size={20} /> : <AlertCircle size={20} />}
               <span className="font-bold">{message.text}</span>
             </div>
           )}
@@ -249,7 +262,7 @@ const ProfileView: React.FC<{ profile: { name: string, gender: string, email: st
                   {avatar ? (
                     <img src={avatar} alt="Profile" className="w-full h-full object-cover" />
                   ) : (
-                    <div className={`w-full h-full flex items-center justify-center text-4xl font-black ${gender === 'female' ? 'text-pink-300' : 'text-emerald-300'}`}>
+                    <div className="w-full h-full flex items-center justify-center text-4xl font-black text-slate-300">
                       {name.charAt(0)}
                     </div>
                   )}
@@ -259,41 +272,26 @@ const ProfileView: React.FC<{ profile: { name: string, gender: string, email: st
                   </div>
                 </div>
               </div>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept="image/*" 
-                onChange={handleImageChange} 
-              />
-              <p className="text-slate-400 text-xs mt-3 font-medium">প্রোফাইল ছবি আপলোড করতে ক্লিক করুন</p>
+              <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageChange} />
+              <p className="text-slate-400 text-xs mt-3 font-medium">ছবি আপলোড করতে ক্লিক করুন</p>
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase ml-1">ইমেইল এড্রেস</label>
-              <input disabled type="text" className="w-full p-4 rounded-2xl border border-slate-100 bg-slate-50 text-slate-500 font-medium cursor-not-allowed" value={profile.email} />
+              <label className="text-xs font-bold text-slate-400 uppercase">আপনার নাম</label>
+              <input required type="text" className="w-full p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none" value={name} onChange={e => setName(e.target.value)} />
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase ml-1">আপনার নাম</label>
-              <input required type="text" className="w-full p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-semibold" value={name} onChange={e => setName(e.target.value)} />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase ml-1">লিঙ্গ</label>
+              <label className="text-xs font-bold text-slate-400 uppercase">লিঙ্গ</label>
               <div className="flex gap-4">
-                <button type="button" onClick={() => setGender('male')} className={`flex-1 py-4 rounded-2xl border font-black text-sm transition-all flex items-center justify-center gap-2 ${gender === 'male' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm shadow-emerald-100' : 'bg-white border-slate-200 text-slate-500'}`}>
-                  পুরুষ (Male)
-                </button>
-                <button type="button" onClick={() => setGender('female')} className={`flex-1 py-4 rounded-2xl border font-black text-sm transition-all flex items-center justify-center gap-2 ${gender === 'female' ? 'bg-pink-50 border-pink-500 text-pink-700 shadow-sm shadow-pink-100' : 'bg-white border-slate-200 text-slate-500'}`}>
-                  মহিলা (Female)
-                </button>
+                <button type="button" onClick={() => setGender('male')} className={`flex-1 py-4 rounded-2xl border font-black text-sm transition-all ${gender === 'male' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm shadow-emerald-100' : 'bg-white border-slate-200 text-slate-500'}`}>পুরুষ</button>
+                <button type="button" onClick={() => setGender('female')} className={`flex-1 py-4 rounded-2xl border font-black text-sm transition-all ${gender === 'female' ? 'bg-pink-50 border-pink-500 text-pink-700 shadow-sm shadow-pink-100' : 'bg-white border-slate-200 text-slate-500'}`}>মহিলা</button>
               </div>
             </div>
 
-            <button disabled={isUpdating} type="submit" className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 mt-4">
+            <button disabled={isUpdating} type="submit" className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black hover:bg-emerald-700 transition-all shadow-xl flex items-center justify-center gap-2">
               {isUpdating ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}
-              পরিবর্তন সংরক্ষণ করুন
+              সংরক্ষণ করুন
             </button>
           </form>
         </div>
@@ -305,6 +303,7 @@ const ProfileView: React.FC<{ profile: { name: string, gender: string, email: st
 // --- MAIN APP COMPONENT ---
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
+  const [localMode, setLocalMode] = useState(false);
   const [userProfile, setUserProfile] = useState<{ name: string, gender: string, email: string, avatar_url: string | null } | null>(null);
   const [farmData, setFarmData] = useState<FarmState>({
     transactions: [],
@@ -315,115 +314,350 @@ const App: React.FC = () => {
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<{ text: string, type: 'fetch' | 'other' } | null>(null);
+
+  // User-specific storage key to prevent data leakage between accounts
+  const getStorageKey = (userId: string) => `poultrypro_data_${userId}`;
+
+  const loadLocalData = (userId: string) => {
+    const key = getStorageKey(userId);
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setFarmData(parsed);
+        return true;
+      } catch (e) {
+        console.error("Local data parse error", e);
+      }
+    } else {
+      // Clear data if no cache for this user
+      setFarmData({ transactions: [], flocks: [], inventory: [] });
+    }
+    return false;
+  };
+
+  const saveLocalData = (data: FarmState, userId: string) => {
+    if (!userId) return;
+    const key = getStorageKey(userId);
+    localStorage.setItem(key, JSON.stringify(data));
+  };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        setUserProfile({
-          name: session.user.user_metadata?.full_name || 'খামারি',
-          gender: session.user.user_metadata?.gender || 'male',
-          email: session.user.email || '',
-          avatar_url: session.user.user_metadata?.avatar_url || null
-        });
-        fetchAllData();
-      } else {
+    const isLocal = sessionStorage.getItem('poultrypro_local_mode') === 'true';
+    if (isLocal) {
+      setLocalMode(true);
+      setSession({ user: { id: 'local-user' } });
+      const localProfile = localStorage.getItem('poultrypro_local_profile');
+      if (localProfile) setUserProfile(JSON.parse(localProfile));
+      else setUserProfile({ name: 'খামারি (অফলাইন)', gender: 'male', email: '', avatar_url: null });
+      loadLocalData('local-user');
+      setIsLoading(false);
+      return;
+    }
+
+    const checkSession = async () => {
+      try {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        setSession(currentSession);
+        if (currentSession) {
+          setUserProfile({
+            name: currentSession.user.user_metadata?.full_name || 'খামারি',
+            gender: currentSession.user.user_metadata?.gender || 'male',
+            email: currentSession.user.email || '',
+            avatar_url: currentSession.user.user_metadata?.avatar_url || null
+          });
+          // Load existing cache immediately for better UX
+          loadLocalData(currentSession.user.id);
+          await fetchAllData(currentSession.user.id);
+        }
+      } catch (err: any) {
+        if (err.message?.includes('fetch') || err.name === 'TypeError') {
+          setErrorMsg({ text: "সার্ভারের সাথে যোগাযোগ করা যাচ্ছে না। আপনার ইন্টারনেট চেক করুন অথবা লোকাল মোড ব্যবহার করুন।", type: 'fetch' });
+        }
+      } finally {
         setIsLoading(false);
       }
-    });
+    };
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
+    checkSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+      if (localMode) return;
+      setSession(currentSession);
+      if (currentSession) {
         setUserProfile({
-          name: session.user.user_metadata?.full_name || 'খামারি',
-          gender: session.user.user_metadata?.gender || 'male',
-          email: session.user.email || '',
-          avatar_url: session.user.user_metadata?.avatar_url || null
+          name: currentSession.user.user_metadata?.full_name || 'খামারি',
+          gender: currentSession.user.user_metadata?.gender || 'male',
+          email: currentSession.user.email || '',
+          avatar_url: currentSession.user.user_metadata?.avatar_url || null
         });
-        fetchAllData();
+        loadLocalData(currentSession.user.id);
+        fetchAllData(currentSession.user.id);
       } else {
-        setUserProfile(null);
+        // Explicitly clear state on logout to prevent data leaking to next login
         setFarmData({ transactions: [], flocks: [], inventory: [] });
+        setUserProfile(null);
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [localMode]);
 
-  const fetchAllData = async () => {
+  const fetchAllData = async (userId: string) => {
+    if (localMode) return;
     setIsLoading(true);
     setErrorMsg(null);
     try {
-      const [txRes, flocksRes, inventoryRes, weightsRes] = await Promise.all([
+      const results = await Promise.allSettled([
         supabase.from('transactions').select('*').order('date', { ascending: false }),
         supabase.from('flocks').select('*').order('startDate', { ascending: false }),
         supabase.from('inventory').select('*').order('name'),
-        supabase.from('weight_logs').select('*')
+        supabase.from('weight_logs').select('*'),
+        supabase.from('mortality_logs').select('*'),
+        supabase.from('feed_logs').select('*')
       ]);
 
-      const anyError = txRes.error || flocksRes.error || inventoryRes.error || weightsRes.error;
-      if (anyError) {
-        if (anyError.code === '42P01') {
-          throw new Error('আপনার সুপাবেস প্রজেক্টে টেবিলগুলো তৈরি করা হয়নি। দয়া করে SQL কোডটি রান করুন।');
-        }
-        throw new Error(anyError.message || 'ডেটা লোড করতে সমস্যা হয়েছে');
-      }
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length > 0) throw new Error('Fetch failed');
 
+      const [txRes, flocksRes, inventoryRes, weightsRes, mortalityRes, feedRes] = results.map(r => (r as PromiseFulfilledResult<any>).value);
+      
       const mappedFlocks = (flocksRes.data || []).map(f => ({
         ...f,
-        weightLogs: (weightsRes.data || []).filter(w => w.flock_id === f.id) || [],
-        mortalityLogs: [] 
+        weightLogs: (weightsRes.data || []).filter((w: any) => w.flock_id === f.id) || [],
+        mortalityLogs: (mortalityRes.data || []).filter((m: any) => m.flock_id === f.id) || [],
+        feedLogs: (feedRes.data || []).filter((fl: any) => fl.flock_id === f.id) || []
       }));
 
-      setFarmData({
+      const newState = {
         transactions: txRes.data || [],
         flocks: mappedFlocks,
         inventory: inventoryRes.data || []
-      });
+      };
+      setFarmData(newState);
+      saveLocalData(newState, userId);
     } catch (err: any) {
-      console.error("Fetch Error:", err);
-      setErrorMsg(err.message);
+      if (err.message?.includes('fetch') || err.name === 'TypeError') {
+        setErrorMsg({ text: "সার্ভারের সাথে যোগাযোগ করা যাচ্ছে না। লোকাল মোড চালু করা হচ্ছে।", type: 'fetch' });
+      } else {
+        setErrorMsg({ text: "ডেটা লোড করতে সমস্যা হয়েছে: " + err.message, type: 'other' });
+      }
+      loadLocalData(userId);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleUpdateProfile = async (updates: { name: string, gender: string, avatar_url: string | null }) => {
-    const { data, error } = await supabase.auth.updateUser({
-      data: {
-        full_name: updates.name,
-        gender: updates.gender,
-        avatar_url: updates.avatar_url
-      }
-    });
-    if (error) throw error;
-    if (data.user) {
-      setUserProfile({
-        name: data.user.user_metadata?.full_name,
-        gender: data.user.user_metadata?.gender,
-        email: data.user.email || '',
-        avatar_url: data.user.user_metadata?.avatar_url
-      });
-    }
+  const enterLocalMode = () => {
+    setLocalMode(true);
+    setSession({ user: { id: 'local-user' } });
+    sessionStorage.setItem('poultrypro_local_mode', 'true');
+    loadLocalData('local-user');
+    setErrorMsg(null);
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    if (localMode) {
+      sessionStorage.removeItem('poultrypro_local_mode');
+      setLocalMode(false);
+      setSession(null);
+      setFarmData({ transactions: [], flocks: [], inventory: [] });
+    } else {
+      await supabase.auth.signOut();
+      setFarmData({ transactions: [], flocks: [], inventory: [] });
+    }
+  };
+
+  const addTransaction = async (t: Omit<Transaction, 'id'>) => {
+    let newTx;
+    if (localMode) {
+      newTx = { ...t, id: 'local-' + Date.now() };
+    } else {
+      const { data, error } = await supabase.from('transactions').insert([t]).select();
+      if (error) return;
+      newTx = data[0];
+    }
+    const newState = { ...farmData, transactions: [newTx, ...farmData.transactions] };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
+  };
+
+  const addFlock = async (f: Omit<FlockRecord, 'id' | 'weightLogs' | 'mortalityLogs' | 'feedLogs'>) => {
+    let newFlock;
+    if (localMode) {
+      newFlock = { ...f, id: 'local-' + Date.now(), weightLogs: [], mortalityLogs: [], feedLogs: [] };
+    } else {
+      const { data, error } = await supabase.from('flocks').insert([f]).select();
+      if (error) return;
+      newFlock = { ...data[0], weightLogs: [], mortalityLogs: [], feedLogs: [] };
+    }
+    const newState = { ...farmData, flocks: [newFlock, ...farmData.flocks] };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
+  };
+
+  const updateFlock = async (id: string, updates: Partial<FlockRecord>) => {
+    if (localMode) {
+      const newState = { ...farmData, flocks: farmData.flocks.map(f => f.id === id ? { ...f, ...updates } : f) };
+      setFarmData(newState);
+      saveLocalData(newState, session.user.id);
+      return;
+    }
+    const { weightLogs, mortalityLogs, feedLogs, id: fid, ...dbUpdates } = updates as any;
+    const { data, error } = await supabase.from('flocks').update(dbUpdates).eq('id', id).select();
+    if (error) return;
+    const newState = { ...farmData, flocks: farmData.flocks.map(f => f.id === id ? { ...f, ...data[0] } : f) };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
+  };
+
+  const addWeightLog = async (flockId: string, log: Omit<WeightLog, 'id'>) => {
+    let newLog;
+    if (localMode) {
+      newLog = { ...log, id: 'local-' + Date.now(), flock_id: flockId };
+    } else {
+      const { data, error } = await supabase.from('weight_logs').insert([{ ...log, flock_id: flockId }]).select();
+      if (error) return;
+      newLog = data[0];
+    }
+    const newState = { ...farmData, flocks: farmData.flocks.map(f => f.id === flockId ? { ...f, weightLogs: [...f.weightLogs, newLog] } : f) };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
+  };
+
+  const addMortalityLog = async (flockId: string, log: Omit<MortalityLog, 'id'>) => {
+    const flock = farmData.flocks.find(f => f.id === flockId);
+    if (!flock) return;
+    
+    // Explicitly handle bird count reduction
+    const deathCount = Number(log.count) || 0;
+    const currentFlockCount = Number(flock.currentCount) || 0;
+    const newCount = Math.max(0, currentFlockCount - deathCount);
+    
+    let newLog;
+    try {
+      if (localMode) {
+        newLog = { ...log, id: 'local-' + Date.now(), flock_id: flockId, count: deathCount };
+      } else {
+        const { data, error: insertError } = await supabase.from('mortality_logs').insert([{ ...log, flock_id: flockId, count: deathCount }]).select();
+        if (insertError) throw insertError;
+        newLog = data[0];
+        
+        // Update database bird count
+        const { error: updateError } = await supabase.from('flocks').update({ currentCount: newCount }).eq('id', flockId);
+        if (updateError) console.error("Database update failed for bird count:", updateError);
+      }
+      
+      const newState: FarmState = { 
+        ...farmData, 
+        flocks: farmData.flocks.map(f => f.id === flockId ? { 
+          ...f, 
+          currentCount: newCount,
+          mortalityLogs: [...f.mortalityLogs, newLog] 
+        } : f) 
+      };
+      setFarmData(newState);
+      saveLocalData(newState, session.user.id);
+    } catch (err: any) {
+      alert("মৃত্যু রেকর্ড করতে সমস্যা হয়েছে: " + (err.message || "Unknown error"));
+    }
+  };
+
+  const addFeedLog = async (flockId: string, log: Omit<FeedLog, 'id'>) => {
+    let newLog;
+    if (localMode) {
+      newLog = { ...log, id: 'local-' + Date.now(), flock_id: flockId };
+    } else {
+      const { data, error } = await supabase.from('feed_logs').insert([{ ...log, flock_id: flockId }]).select();
+      if (error) return;
+      newLog = data[0];
+    }
+    const newState = { ...farmData, flocks: farmData.flocks.map(f => f.id === flockId ? { ...f, feedLogs: [...f.feedLogs, newLog] } : f) };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
+  };
+
+  const addInventoryItem = async (item: Omit<InventoryItem, 'id'>) => {
+    let newItem;
+    if (localMode) {
+      newItem = { ...item, id: 'local-' + Date.now() };
+    } else {
+      const { data, error } = await supabase.from('inventory').insert([item]).select();
+      if (error) return;
+      newItem = data[0];
+    }
+    const newState = { ...farmData, inventory: [newItem, ...farmData.inventory] };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
+  };
+
+  const updateInventoryItem = async (id: string, updates: Partial<InventoryItem>) => {
+    if (localMode) {
+      const newState = { ...farmData, inventory: farmData.inventory.map(i => i.id === id ? { ...i, ...updates } : i) };
+      setFarmData(newState);
+      saveLocalData(newState, session.user.id);
+      return;
+    }
+    const { data, error } = await supabase.from('inventory').update(updates).eq('id', id).select();
+    if (error) {
+      alert("ইনভেন্টরি আপডেট করতে সমস্যা হয়েছে: " + error.message);
+      return;
+    }
+    const newState = { ...farmData, inventory: farmData.inventory.map(i => i.id === id ? { ...i, ...data[0] } : i) };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
+  };
+
+  const deleteInventoryItem = async (id: string) => {
+    if (!localMode) {
+      const { error } = await supabase.from('inventory').delete().eq('id', id);
+      if (error) {
+        alert("মুছে ফেলতে সমস্যা হয়েছে");
+        return;
+      }
+    }
+    const newState = { ...farmData, inventory: farmData.inventory.filter(i => i.id !== id) };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
+  };
+
+  const deleteFlock = async (id: string) => {
+    if (!localMode) {
+      await supabase.from('flocks').delete().eq('id', id);
+    }
+    const newState = { ...farmData, flocks: farmData.flocks.filter(f => f.id !== id) };
+    setFarmData(newState);
+    saveLocalData(newState, session.user.id);
   };
 
   const stats = useMemo(() => {
     const totalIncome = farmData.transactions
       .filter(t => t.type === TransactionType.INCOME)
-      .reduce((sum, t) => sum + t.amount, 0);
+      .reduce((sum, t) => sum + Number(t.amount), 0);
     const totalExpense = farmData.transactions
       .filter(t => t.type === TransactionType.EXPENSE)
-      .reduce((sum, t) => sum + t.amount, 0);
-    const totalBirds = farmData.flocks.reduce((sum, f) => sum + f.currentCount, 0);
-    const lowStockItems = farmData.inventory.filter(i => i.currentQuantity < i.minThreshold).length;
+      .reduce((sum, t) => sum + Number(t.amount), 0);
+    
+    const totalBirds = farmData.flocks.reduce((sum, f) => sum + Number(f.currentCount), 0);
+    const initialBirds = farmData.flocks.reduce((sum, f) => sum + Number(f.initialCount), 0);
+    
+    const totalMortality = farmData.flocks.reduce((sum, f) => 
+      sum + f.mortalityLogs.reduce((s, m) => s + Number(m.count), 0), 0
+    );
+    
+    const mortalityRate = initialBirds > 0 ? (totalMortality / initialBirds) * 100 : 0;
+    const lowStockItems = farmData.inventory.filter(i => Number(i.currentQuantity) < Number(i.minThreshold)).length;
 
-    return { totalIncome, totalExpense, totalBirds, lowStockItems, balance: totalIncome - totalExpense };
+    return { 
+      totalIncome, 
+      totalExpense, 
+      totalBirds, 
+      totalMortality, 
+      mortalityRate, 
+      balance: totalIncome - totalExpense, 
+      lowStockItems 
+    };
   }, [farmData]);
 
   const handleFetchAiInsights = async () => {
@@ -433,57 +667,31 @@ const App: React.FC = () => {
     setIsAiLoading(false);
   };
 
-  const addTransaction = async (t: Omit<Transaction, 'id'>) => {
-    const { data, error } = await supabase.from('transactions').insert([t]).select();
-    if (!error && data) setFarmData(prev => ({ ...prev, transactions: [data[0], ...prev.transactions] }));
-  };
-
-  const addFlock = async (f: Omit<FlockRecord, 'id' | 'weightLogs' | 'mortalityLogs'>) => {
-    const { data, error } = await supabase.from('flocks').insert([f]).select();
-    if (!error && data) setFarmData(prev => ({ ...prev, flocks: [{ ...data[0], weightLogs: [], mortalityLogs: [] }, ...prev.flocks] }));
-  };
-
-  const updateFlock = async (id: string, updates: Partial<FlockRecord>) => {
-    const { weightLogs, mortalityLogs, id: fid, ...dbUpdates } = updates as any;
-    const { data, error } = await supabase.from('flocks').update(dbUpdates).eq('id', id).select();
-    if (!error && data) setFarmData(prev => ({ ...prev, flocks: prev.flocks.map(f => f.id === id ? { ...f, ...data[0] } : f) }));
-  };
-
-  const addWeightLog = async (flockId: string, log: Omit<WeightLog, 'id'>) => {
-    const { data, error } = await supabase.from('weight_logs').insert([{ ...log, flock_id: flockId }]).select();
-    if (!error && data) setFarmData(prev => ({ ...prev, flocks: prev.flocks.map(f => f.id === flockId ? { ...f, weightLogs: [...f.weightLogs, data[0]] } : f) }));
-  };
-
-  const addInventoryItem = async (item: Omit<InventoryItem, 'id'>) => {
-    const { data, error } = await supabase.from('inventory').insert([item]).select();
-    if (!error && data) setFarmData(prev => ({ ...prev, inventory: [data[0], ...prev.inventory] }));
-  };
-
-  const deleteFlock = async (id: string) => {
-    const { error } = await supabase.from('flocks').delete().eq('id', id);
-    if (!error) setFarmData(prev => ({ ...prev, flocks: prev.flocks.filter(f => f.id !== id) }));
-  };
-
   if (isLoading) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-4">
         <Loader2 className="animate-spin text-emerald-600" size={48} />
-        <p className="text-slate-600 font-medium font-['Hind_Siliguri',_sans-serif]">লোড হচ্ছে...</p>
+        <p className="text-slate-600 font-medium">লোড হচ্ছে...</p>
       </div>
     );
   }
 
-  if (!session) {
-    return <Auth onAuthSuccess={() => {}} />;
+  if (!session && !localMode) {
+    return <Auth onAuthSuccess={() => {}} onEnterLocalMode={enterLocalMode} serverError={errorMsg?.text} />;
   }
 
-  if (errorMsg) {
+  if (errorMsg && errorMsg.type === 'fetch') {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-slate-50 p-6 text-center font-['Hind_Siliguri',_sans-serif]">
-        <Database size={32} className="text-rose-600 mb-4" />
-        <h3 className="text-xl font-bold mb-2">সমস্যা হয়েছে</h3>
-        <p className="text-slate-500 mb-6">{errorMsg}</p>
-        <button onClick={fetchAllData} className="px-6 py-2 bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2 mx-auto shadow-lg shadow-emerald-50"><RefreshCcw size={18} /> পুনরায় চেষ্টা করুন</button>
+        <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl max-w-lg w-full">
+          <WifiOff size={40} className="text-blue-600 mx-auto mb-6" />
+          <h3 className="text-2xl font-black mb-4">সার্ভার সংযোগ বিচ্ছিন্ন</h3>
+          <p className="text-slate-500 mb-10">{errorMsg.text}</p>
+          <div className="grid grid-cols-1 gap-3">
+            <button onClick={() => fetchAllData(session?.user?.id)} className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black flex items-center justify-center gap-3"><RefreshCcw size={20} /> পুনরায় চেষ্টা করুন</button>
+            <button onClick={enterLocalMode} className="w-full py-4 bg-white text-emerald-600 border-2 border-emerald-100 rounded-2xl font-black flex items-center justify-center gap-3"><DatabaseBackup size={20} /> লোকাল মোডে শুরু করুন</button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -492,26 +700,30 @@ const App: React.FC = () => {
     <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-900 font-['Hind_Siliguri',_sans-serif]">
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col hidden md:flex">
         <div className="p-6 border-b border-slate-100 flex items-center gap-3">
-          <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shadow-sm">
-            <Bird size={24} />
-          </div>
+          <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shadow-sm"><Bird size={24} /></div>
           <h1 className="font-bold text-xl tracking-tight text-emerald-900">PoultryPro</h1>
         </div>
-        
         <nav className="flex-1 p-4 space-y-2">
-          <SidebarLink icon={<LayoutDashboard size={20} />} label={TAB_NAMES.dashboard} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <SidebarLink icon={<Bird size={20} />} label={TAB_NAMES.flocks} active={activeTab === 'flocks'} onClick={() => setActiveTab('flocks')} />
-          <SidebarLink icon={<TrendingUp size={20} />} label={TAB_NAMES.transactions} active={activeTab === 'transactions'} onClick={() => setActiveTab('transactions')} />
-          <SidebarLink icon={<Package size={20} />} label={TAB_NAMES.inventory} active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} />
-          <SidebarLink icon={<BrainCircuit size={20} />} label={TAB_NAMES.ai} active={activeTab === 'ai'} onClick={() => setActiveTab('ai')} />
+          {Object.keys(TAB_NAMES).map(key => (
+            <button key={key} onClick={() => setActiveTab(key as any)} className={`flex items-center gap-3 w-full p-3 rounded-xl font-bold transition-all text-sm ${activeTab === key ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-600 hover:bg-emerald-50'}`}>
+              {key === 'dashboard' && <LayoutDashboard size={20} />}
+              {key === 'flocks' && <Bird size={20} />}
+              {key === 'transactions' && <TrendingUp size={20} />}
+              {key === 'inventory' && <Package size={20} />}
+              {key === 'ai' && <BrainCircuit size={20} />}
+              {key === 'profile' && <User size={20} />}
+              <span>{TAB_NAMES[key as keyof typeof TAB_NAMES]}</span>
+            </button>
+          ))}
         </nav>
-
         <div className="p-4 border-t border-slate-100">
-           <SidebarLink icon={<User size={20} />} label={TAB_NAMES.profile} active={activeTab === 'profile'} onClick={() => setActiveTab('profile')} />
-          <button onClick={handleLogout} className="flex items-center gap-3 w-full p-3 text-slate-500 hover:text-red-600 transition-colors font-bold text-sm mt-2">
-            <LogOut size={20} />
-            <span>লগ আউট</span>
-          </button>
+          {localMode && (
+            <div className="mb-4 p-3 bg-blue-50 rounded-xl border border-blue-100 flex items-center gap-2">
+              <WifiOff size={16} className="text-blue-600" />
+              <span className="text-[10px] font-bold text-blue-700 uppercase tracking-tighter">অফলাইন মোড</span>
+            </div>
+          )}
+          <button onClick={handleLogout} className="flex items-center gap-3 w-full p-3 text-slate-500 hover:text-red-600 font-bold text-sm"><LogOut size={20} /><span>লগ আউট</span></button>
         </div>
       </aside>
 
@@ -520,125 +732,98 @@ const App: React.FC = () => {
           <div>
             <h2 className="text-xl font-bold text-slate-800">{TAB_NAMES[activeTab]}</h2>
             <p className="text-sm text-slate-600 font-medium">
-              {userProfile?.gender === 'female' ? `স্বাগতম ${userProfile.name} বোন` : `স্বাগতম ${userProfile?.name} ভাই`}
+              {userProfile?.name} {localMode && <span className="text-xs bg-blue-100 text-blue-700 px-2 rounded-full font-bold ml-2">অফলাইন</span>}
             </p>
           </div>
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setActiveTab('profile')}
-              className={`w-10 h-10 rounded-full border-2 overflow-hidden flex items-center justify-center font-bold shadow-sm transition-transform hover:scale-105 active:scale-95 ${userProfile?.gender === 'female' ? 'bg-pink-100 border-pink-200 text-pink-700' : 'bg-emerald-100 border-emerald-200 text-emerald-700'}`}
-            >
-              {userProfile?.avatar_url ? (
-                <img src={userProfile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
-              ) : (
-                userProfile?.name.charAt(0)
-              )}
-            </button>
-          </div>
+          <button onClick={() => setActiveTab('profile')} className="w-10 h-10 rounded-full border-2 overflow-hidden bg-emerald-50 text-emerald-700 font-bold flex items-center justify-center hover:scale-105 transition-transform">
+            {userProfile?.avatar_url ? <img src={userProfile.avatar_url} className="w-full h-full object-cover" /> : userProfile?.name.charAt(0)}
+          </button>
         </header>
 
         <div className="p-8">
           {activeTab === 'dashboard' && <DashboardView farmData={farmData} stats={stats} />}
-          {activeTab === 'flocks' && <FlockView farmData={farmData} onAdd={addFlock} onUpdate={updateFlock} onDelete={deleteFlock} onAddWeight={addWeightLog} />}
+          {activeTab === 'flocks' && <FlockView farmData={farmData} onAdd={addFlock} onUpdate={updateFlock} onDelete={deleteFlock} onAddWeight={addWeightLog} onAddMortality={addMortalityLog} onAddFeed={addFeedLog} />}
           {activeTab === 'transactions' && <TransactionView farmData={farmData} onAdd={addTransaction} />}
-          {activeTab === 'inventory' && <InventoryView farmData={farmData} onAdd={addInventoryItem} />}
+          {activeTab === 'inventory' && <InventoryView farmData={farmData} onAdd={addInventoryItem} onUpdate={updateInventoryItem} onDelete={deleteInventoryItem} />}
           {activeTab === 'ai' && <AiView loading={isAiLoading} insights={aiInsights} onFetch={handleFetchAiInsights} />}
-          {activeTab === 'profile' && userProfile && <ProfileView profile={userProfile} onUpdate={handleUpdateProfile} />}
+          {activeTab === 'profile' && userProfile && <ProfileView profile={userProfile} onUpdate={async (u) => { setUserProfile({ ...userProfile, ...u }); if (!localMode) await supabase.auth.updateUser({ data: { full_name: u.name, gender: u.gender, avatar_url: u.avatar_url } }); }} />}
         </div>
       </main>
     </div>
   );
 };
 
-const SidebarLink: React.FC<{ icon: React.ReactNode, label: string, active: boolean, onClick: () => void }> = ({ icon, label, active, onClick }) => (
-  <button onClick={onClick} className={`flex items-center gap-3 w-full p-3 rounded-lg font-bold transition-all text-sm ${active ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'}`}>
-    {icon}
-    <span>{label}</span>
-  </button>
-);
-
-const DashboardView: React.FC<{ farmData: FarmState, stats: any }> = ({ farmData, stats }) => {
-  const birdStats = farmData.flocks[0]?.weightLogs.map(l => ({ date: l.date, weight: l.averageWeight })) || [];
-
-  return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="মোট মুরগি" value={stats.totalBirds.toLocaleString()} icon={<Bird className="text-blue-500" />} />
-        <StatCard title="মোট আয়" value={`৳${stats.totalIncome.toLocaleString()}`} icon={<TrendingUp className="text-emerald-500" />} />
-        <StatCard title="মোট ব্যয়" value={`৳${stats.totalExpense.toLocaleString()}`} icon={<TrendingDown className="text-rose-500" />} />
-        <StatCard title="নিট মুনাফা" value={`৳${stats.balance.toLocaleString()}`} icon={<History className="text-amber-500" />} highlight={stats.balance < 0 ? 'text-rose-600' : 'text-emerald-600'} />
+const DashboardView: React.FC<{ farmData: FarmState, stats: any }> = ({ farmData, stats }) => (
+  <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <StatCard title="মোট মুরগি" value={stats.totalBirds.toLocaleString()} icon={<Bird className="text-blue-500" />} />
+      <StatCard title="মোট মৃত্যু" value={stats.totalMortality.toLocaleString()} icon={<Skull className="text-rose-500" />} highlight="text-rose-600" />
+      <StatCard title="মৃত্যুর হার" value={`${stats.mortalityRate.toFixed(1)}%`} icon={<AlertTriangle className="text-amber-500" />} />
+      <StatCard title="ব্যালেন্স" value={`৳${stats.balance.toLocaleString()}`} icon={<History className="text-amber-500" />} highlight={stats.balance < 0 ? 'text-rose-600' : 'text-emerald-600'} />
+    </div>
+    
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm h-[400px]">
+        <h3 className="font-bold text-slate-800 mb-6">মুরগির বৃদ্ধির গতিপথ (গড় ওজন)</h3>
+        <ResponsiveContainer width="100%" height="80%">
+          <AreaChart data={farmData.flocks[0]?.weightLogs || []}>
+            <defs>
+              <linearGradient id="colorWeight" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+            <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} />
+            <YAxis stroke="#94a3b8" fontSize={10} unit="g" />
+            <Tooltip />
+            <Area type="monotone" dataKey="averageWeight" stroke="#3b82f6" fillOpacity={1} fill="url(#colorWeight)" />
+          </AreaChart>
+        </ResponsiveContainer>
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="font-bold text-slate-800">বৃদ্ধির পারফরম্যান্স (গড় ওজন)</h3>
-            <span className="text-xs font-semibold px-3 py-1 bg-blue-50 text-blue-600 rounded-full">সক্রিয় ব্যাচ</span>
-          </div>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={birdStats}>
-                <defs>
-                  <linearGradient id="colorWeight" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} unit="g" />
-                <Tooltip />
-                <Area type="monotone" dataKey="weight" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorWeight)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col hover:shadow-md transition-shadow">
-          <h3 className="font-bold text-slate-800 mb-6">জরুরি ইনভেন্টরি</h3>
-          <div className="space-y-4 overflow-y-auto max-h-[300px] pr-2">
-            {farmData.inventory.filter(i => i.currentQuantity < i.minThreshold).map(item => (
-              <div key={item.id} className="flex items-center gap-4 p-3 bg-rose-50 rounded-xl border border-rose-100 animate-in slide-in-from-right-2">
-                <div className="p-2 bg-rose-100 text-rose-600 rounded-lg">
-                  <AlertTriangle size={20} />
-                </div>
-                <div className="flex-1">
-                  <p className="font-semibold text-sm text-slate-800">{item.name}</p>
-                  <p className="text-xs text-rose-600 font-bold">মাত্র {item.currentQuantity} {item.unit} আছে</p>
-                </div>
+      
+      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+        <h3 className="font-bold text-slate-800 mb-6">স্টক অ্যালার্ট</h3>
+        <div className="space-y-4">
+          {farmData.inventory.filter(i => Number(i.currentQuantity) < Number(i.minThreshold)).map(item => (
+            <div key={item.id} className="p-4 bg-rose-50 rounded-2xl border border-rose-100 flex items-center gap-3">
+              <AlertTriangle className="text-rose-500" />
+              <div>
+                <p className="font-bold text-slate-800 text-sm">{item.name}</p>
+                <p className="text-xs text-rose-600">কম মজুদ: {item.currentQuantity} {item.unit}</p>
               </div>
-            ))}
-            {farmData.inventory.filter(i => i.currentQuantity < i.minThreshold).length === 0 && (
-              <div className="text-center py-20 opacity-40">
-                <Package className="mx-auto mb-2" size={32} />
-                <p className="text-sm font-medium">ইনভেন্টরি পর্যাপ্ত আছে</p>
-              </div>
-            )}
-          </div>
+            </div>
+          ))}
+          {stats.lowStockItems === 0 && (
+            <div className="text-center py-20 opacity-40">
+              <Package size={32} className="mx-auto mb-2" />
+              <p className="text-sm font-bold">স্টক পর্যাপ্ত আছে</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
-  );
-};
-
-const StatCard: React.FC<{ title: string, value: string, icon: React.ReactNode, highlight?: string }> = ({ title, value, icon, highlight }) => (
-  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-start justify-between hover:shadow-md transition-shadow">
-    <div>
-      <p className="text-slate-500 text-xs font-bold mb-1 uppercase tracking-wider">{title}</p>
-      <h4 className={`text-xl font-bold ${highlight || 'text-slate-900'}`}>{value}</h4>
-    </div>
-    <div className="p-3 bg-slate-50 rounded-xl">{icon}</div>
   </div>
 );
 
-const FlockView: React.FC<{ farmData: FarmState, onAdd: (f: any) => void, onUpdate: (id: string, f: any) => void, onDelete: (id: string) => void, onAddWeight: (id: string, log: any) => void }> = ({ farmData, onAdd, onUpdate, onDelete, onAddWeight }) => {
+const FlockView: React.FC<{ 
+  farmData: FarmState, 
+  onAdd: (f: any) => void, 
+  onUpdate: (id: string, f: any) => void, 
+  onDelete: (id: string) => void, 
+  onAddWeight: (id: string, log: any) => void,
+  onAddMortality: (id: string, log: any) => void,
+  onAddFeed: (id: string, log: any) => void
+}> = ({ farmData, onAdd, onUpdate, onDelete, onAddWeight, onAddMortality, onAddFeed }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [activeWeightId, setActiveWeightId] = useState<string | null>(null);
+  const [activeLogFlockId, setActiveLogFlockId] = useState<{ id: string, type: 'weight' | 'mortality' | 'feed' } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   
   const [formState, setFormState] = useState({ batchName: '', breed: 'ক্লব ৫০০', initialCount: 0, currentCount: 0, startDate: new Date().toISOString().split('T')[0] });
-  const [newWeight, setNewWeight] = useState({ averageWeight: 0, sampleSize: 10, date: new Date().toISOString().split('T')[0] });
+  const [weightForm, setWeightForm] = useState({ averageWeight: 0, sampleSize: 10, date: new Date().toISOString().split('T')[0] });
+  const [mortalityForm, setMortalityForm] = useState({ count: 0, reason: '', date: new Date().toISOString().split('T')[0] });
+  const [feedForm, setFeedForm] = useState({ amount: 0, unit: 'ব্যাগ', date: new Date().toISOString().split('T')[0] });
 
   const resetForm = () => {
     setFormState({ batchName: '', breed: 'ক্লব ৫০০', initialCount: 0, currentCount: 0, startDate: new Date().toISOString().split('T')[0] });
@@ -646,208 +831,248 @@ const FlockView: React.FC<{ farmData: FarmState, onAdd: (f: any) => void, onUpda
     setEditingId(null);
   };
 
-  const handleEditClick = (flock: FlockRecord) => {
-    setFormState({
-      batchName: flock.batchName,
-      breed: flock.breed,
-      initialCount: flock.initialCount,
-      currentCount: flock.currentCount,
-      startDate: flock.startDate
-    });
+  const handleEdit = (flock: FlockRecord) => {
+    setFormState({ ...flock });
     setEditingId(flock.id);
     setIsAdding(true);
   };
 
-  const handleSubmit = () => {
-    if (editingId) {
-      onUpdate(editingId, formState);
-    } else {
-      onAdd(formState);
-    }
-    resetForm();
-  };
-
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500 font-['Hind_Siliguri',_sans-serif]">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-bold text-slate-800">সক্রিয় ব্যাচের তালিকা</h3>
-        <button onClick={() => { if (isAdding) resetForm(); else setIsAdding(true); }} className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all text-sm font-bold shadow-lg shadow-emerald-50">
+        <h3 className="text-lg font-bold text-slate-800">ব্যাচ ব্যবস্থাপনা</h3>
+        <button onClick={() => { if (isAdding) resetForm(); else setIsAdding(true); }} className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 font-bold shadow-lg shadow-emerald-50">
           {isAdding ? 'বাতিল' : <><Plus size={18} /> নতুন ব্যাচ</>}
         </button>
       </div>
 
       {isAdding && (
-        <div className="bg-white p-6 rounded-2xl border border-emerald-200 shadow-lg animate-in slide-in-from-top-4">
+        <div className="bg-white p-6 rounded-3xl border border-emerald-100 shadow-xl animate-in slide-in-from-top-4">
           <h4 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
             {editingId ? <Edit2 size={20} className="text-emerald-600" /> : <Plus size={20} className="text-emerald-600" />}
-            {editingId ? 'ব্যাচের তথ্য পরিবর্তন করুন' : 'নতুন ব্যাচের তথ্য দিন'}
+            {editingId ? 'ব্যাচ এডিট করুন' : 'নতুন ব্যাচ যোগ করুন'}
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400 ml-1">ব্যাচের নাম</label>
-              <input type="text" placeholder="উদাঃ ব্যাচ-০১" className="p-3 border border-slate-200 rounded-xl text-sm w-full outline-none focus:ring-2 focus:ring-emerald-500 transition-all" value={formState.batchName} onChange={(e) => setFormState({...formState, batchName: e.target.value})} />
+              <label className="text-xs font-bold text-slate-400">ব্যাচের নাম</label>
+              <input type="text" className="w-full p-3 border rounded-xl" value={formState.batchName} onChange={e => setFormState({...formState, batchName: e.target.value})} />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400 ml-1">জাত (Breed)</label>
-              <input type="text" placeholder="উদাঃ ক্লব ৫০০" className="p-3 border border-slate-200 rounded-xl text-sm w-full outline-none focus:ring-2 focus:ring-emerald-500 transition-all" value={formState.breed} onChange={(e) => setFormState({...formState, breed: e.target.value})} />
+              <label className="text-xs font-bold text-slate-400">জাত</label>
+              <input type="text" className="w-full p-3 border rounded-xl" value={formState.breed} onChange={e => setFormState({...formState, breed: e.target.value})} />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400 ml-1">শুরুর সংখ্যা</label>
-              <input type="number" placeholder="উদাঃ ৫০০" className="p-3 border border-slate-200 rounded-xl text-sm w-full outline-none focus:ring-2 focus:ring-emerald-500 transition-all" value={formState.initialCount || ''} onChange={(e) => { const val = parseInt(e.target.value) || 0; setFormState({...formState, initialCount: val, currentCount: val}); }} />
+              <label className="text-xs font-bold text-slate-400">শুরুর সংখ্যা</label>
+              <input type="number" className="w-full p-3 border rounded-xl" value={formState.initialCount || ''} onChange={e => { const v = parseInt(e.target.value) || 0; setFormState({...formState, initialCount: v, currentCount: v}); }} />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400 ml-1">শুরুর তারিখ</label>
-              <input type="date" className="p-3 border border-slate-200 rounded-xl text-sm w-full outline-none focus:ring-2 focus:ring-emerald-500 transition-all" value={formState.startDate} onChange={(e) => setFormState({...formState, startDate: e.target.value})} />
+              <label className="text-xs font-bold text-slate-400">তারিখ</label>
+              <input type="date" className="w-full p-3 border rounded-xl" value={formState.startDate} onChange={e => setFormState({...formState, startDate: e.target.value})} />
             </div>
           </div>
           <div className="mt-8 flex gap-3">
-            <button disabled={!formState.batchName || !formState.initialCount} onClick={handleSubmit} className="px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold disabled:opacity-50 flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-md">
-              <Check size={18} /> {editingId ? 'পরিবর্তন সেভ করুন' : 'ব্যাচ তৈরি করুন'}
-            </button>
-            <button onClick={resetForm} className="px-8 py-3 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-all">বাতিল</button>
+            <button onClick={() => { if (editingId) onUpdate(editingId, formState); else onAdd(formState); resetForm(); }} className="px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2"><Check size={18} /> সেভ করুন</button>
+            <button onClick={resetForm} className="px-8 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold">বাতিল</button>
           </div>
         </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {farmData.flocks.length > 0 ? (
-          farmData.flocks.map(flock => (
-            <div key={flock.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm flex flex-col group relative transition-all hover:shadow-xl hover:-translate-y-1">
-              <div className="p-6 bg-emerald-600 text-white">
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h4 className="text-2xl font-bold">{flock.batchName}</h4>
-                    <p className="text-emerald-100 text-sm flex items-center gap-1.5 mt-2 font-medium">
-                      <Bird size={14} className="opacity-80" /> জাত: <span className="font-bold underline decoration-emerald-400 decoration-2">{flock.breed || 'উল্লেখ নেই'}</span>
-                    </p>
-                    <p className="text-emerald-100 text-[10px] mt-2 font-bold opacity-70 tracking-widest">শুরু: {flock.startDate}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => handleEditClick(flock)} className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition-all" title="এডিট">
-                      <Edit2 size={16} />
-                    </button>
-                    <button onClick={() => setConfirmDeleteId(flock.id)} className="p-2.5 bg-white/10 hover:bg-rose-500 rounded-xl transition-all" title="ডিলিট">
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+        {farmData.flocks.map(flock => (
+          <div key={flock.id} className="bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-xl transition-all group relative">
+            <div className="p-8 bg-emerald-600 text-white">
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h4 className="text-3xl font-black">{flock.batchName}</h4>
+                  <p className="text-emerald-100 font-bold mt-2 opacity-80">{flock.breed} • {flock.startDate}</p>
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm">
-                    <p className="text-emerald-100 text-[10px] uppercase font-bold opacity-80 tracking-tighter">বর্তমান সংখ্যা</p>
-                    <p className="text-3xl font-bold mt-1">{flock.currentCount}</p>
-                  </div>
-                  <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm">
-                    <p className="text-emerald-100 text-[10px] uppercase font-bold opacity-80 tracking-tighter">গড় ওজন</p>
-                    <p className="text-3xl font-bold mt-1">{flock.weightLogs.length > 0 ? `${flock.weightLogs[flock.weightLogs.length - 1].averageWeight} গ্রাম` : 'নেই'}</p>
-                  </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleEdit(flock)} className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition-all"><Edit2 size={16} /></button>
+                  <button onClick={() => setConfirmDeleteId(flock.id)} className="p-2.5 bg-white/10 hover:bg-rose-500 rounded-xl transition-all"><Trash2 size={16} /></button>
                 </div>
               </div>
-
-              {confirmDeleteId === flock.id && (
-                <div className="absolute inset-0 bg-slate-900/95 z-20 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300 backdrop-blur-sm">
-                  <div className="p-4 bg-rose-500/10 rounded-full mb-4">
-                    <AlertCircle size={48} className="text-rose-500" />
-                  </div>
-                  <h5 className="text-white font-bold text-xl mb-3">আপনি কি নিশ্চিত?</h5>
-                  <p className="text-slate-400 text-sm mb-8 leading-relaxed">এই ব্যাচ এবং এর সব রেকর্ড চিরতরে মুছে যাবে। এটি আর ফিরে পাওয়া সম্ভব নয়।</p>
-                  <div className="flex gap-3 w-full max-w-xs">
-                    <button onClick={() => { onDelete(flock.id); setConfirmDeleteId(null); }} className="flex-1 bg-rose-600 text-white py-3.5 rounded-2xl font-bold hover:bg-rose-700 transition-all shadow-lg shadow-rose-900/20">মুছে ফেলুন</button>
-                    <button onClick={() => setConfirmDeleteId(null)} className="flex-1 bg-slate-700 text-white py-3.5 rounded-2xl font-bold hover:bg-slate-600 transition-all">বাতিল</button>
-                  </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-white/10 p-4 rounded-2xl">
+                  <p className="text-[10px] font-bold uppercase opacity-60">বর্তমান সংখ্যা</p>
+                  <p className="text-2xl font-black mt-1">{flock.currentCount}</p>
                 </div>
-              )}
-
-              <div className="p-6 flex-1 bg-white">
-                {activeWeightId === flock.id ? (
-                  <div className="bg-slate-50 p-5 rounded-2xl space-y-4 mb-4 border border-emerald-100 animate-in zoom-in-95 duration-200 shadow-inner">
-                    <h5 className="font-bold text-xs text-emerald-800 uppercase tracking-widest text-center border-b border-emerald-100 pb-2">ওজন রেকর্ড করুন</h5>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-400 ml-1">ওজন (গ্রাম)</label>
-                        <input type="number" className="p-2.5 border border-slate-200 rounded-xl text-sm w-full outline-none focus:ring-2 focus:ring-emerald-500" value={newWeight.averageWeight || ''} onChange={(e) => setNewWeight({...newWeight, averageWeight: parseInt(e.target.value) || 0})} />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-400 ml-1">নমুনা সংখ্যা</label>
-                        <input type="number" className="p-2.5 border border-slate-200 rounded-xl text-sm w-full outline-none focus:ring-2 focus:ring-emerald-500" value={newWeight.sampleSize || ''} onChange={(e) => setNewWeight({...newWeight, sampleSize: parseInt(e.target.value) || 0})} />
-                      </div>
-                    </div>
-                    <div className="flex gap-2 pt-1">
-                      <button onClick={() => { onAddWeight(flock.id, newWeight); setActiveWeightId(null); setNewWeight({ averageWeight: 0, sampleSize: 10, date: new Date().toISOString().split('T')[0] }); }} className="flex-1 bg-emerald-600 text-white py-2.5 rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-sm">সেভ করুন</button>
-                      <button onClick={() => setActiveWeightId(null)} className="px-5 py-2.5 border border-slate-200 rounded-xl font-bold text-xs bg-white hover:bg-slate-50 transition-all">বন্ধ</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <h5 className="font-bold text-xs text-slate-400 mb-4 uppercase tracking-widest flex items-center gap-2">
-                       <History size={14} /> ওজনের ইতিহাস
-                    </h5>
-                    <div className="space-y-3 mb-8">
-                      {flock.weightLogs.length > 0 ? (
-                        flock.weightLogs.slice(-3).reverse().map(log => (
-                          <div key={log.id} className="flex justify-between items-center text-sm p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-emerald-100 transition-colors">
-                            <span className="text-slate-500 font-bold">{log.date}</span>
-                            <span className="font-extrabold text-slate-800 flex items-center gap-1.5 bg-white px-3 py-1 rounded-full shadow-sm"><Scale size={14} className="text-blue-500" />{log.averageWeight} গ্রাম</span>
-                          </div>
-                        ))
-                      ) : ( <p className="text-xs text-slate-400 italic py-4 text-center bg-slate-50 rounded-xl">রেকর্ড নেই</p> )}
-                    </div>
-                    <button onClick={() => setActiveWeightId(flock.id)} className="w-full py-4 border-2 border-dashed border-emerald-200 text-emerald-600 font-bold rounded-2xl hover:bg-emerald-50 hover:border-emerald-300 transition-all text-sm flex items-center justify-center gap-2.5 group">
-                      <Plus size={18} className="group-hover:scale-110 transition-transform" /> ওজন রেকর্ড করুন
-                    </button>
-                  </>
-                )}
+                <div className="bg-white/10 p-4 rounded-2xl">
+                  <p className="text-[10px] font-bold uppercase opacity-60">গড় ওজন</p>
+                  <p className="text-2xl font-black mt-1">{flock.weightLogs.length > 0 ? `${flock.weightLogs[flock.weightLogs.length - 1].averageWeight}g` : '-'}</p>
+                </div>
+                <div className="bg-white/10 p-4 rounded-2xl">
+                  <p className="text-[10px] font-bold uppercase opacity-60">মৃত্যু</p>
+                  <p className="text-2xl font-black mt-1 text-rose-200">{flock.mortalityLogs.reduce((s, m) => s + Number(m.count), 0)} টি</p>
+                </div>
               </div>
             </div>
-          ))
-        ) : (
-          <div className="col-span-full py-32 text-center bg-white rounded-[2rem] border-2 border-dashed border-slate-200 shadow-inner">
-             <Bird size={64} className="mx-auto text-slate-200 mb-6" />
-             <p className="text-slate-500 font-bold text-xl mb-2">কোনো মুরগির ব্যাচ নেই</p>
-             <p className="text-slate-400 text-sm max-w-xs mx-auto">খামারের কার্যক্রম শুরু করতে নতুন ব্যাচ যোগ করুন।</p>
+
+            <div className="p-8 space-y-8">
+              {/* History Lists */}
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Scale size={14} className="text-blue-500" /> ওজন</h5>
+                  <div className="space-y-2">
+                    {flock.weightLogs.slice(-2).reverse().map(log => (
+                      <div key={log.id} className="flex flex-col p-2.5 bg-slate-50 rounded-xl text-[10px] font-bold">
+                        <span className="text-slate-400">{log.date}</span>
+                        <span className="text-slate-800">{log.averageWeight}g</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Skull size={14} className="text-rose-500" /> মৃত্যু</h5>
+                  <div className="space-y-2">
+                    {flock.mortalityLogs.slice(-2).reverse().map(log => (
+                      <div key={log.id} className="flex flex-col p-2.5 bg-rose-50 rounded-xl text-[10px] font-bold border border-rose-100">
+                        <span className="text-rose-400">{log.date}</span>
+                        <span className="text-rose-800">{log.count} টি</span>
+                        {log.reason && <span className="text-[8px] opacity-70 truncate">{log.reason}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><UtensilsCrossed size={14} className="text-amber-500" /> খাদ্য</h5>
+                  <div className="space-y-2">
+                    {flock.feedLogs.slice(-2).reverse().map(log => (
+                      <div key={log.id} className="flex flex-col p-2.5 bg-amber-50 rounded-xl text-[10px] font-bold border border-amber-100">
+                        <span className="text-amber-400">{log.date}</span>
+                        <span className="text-amber-800">{log.amount} {log.unit}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Forms */}
+              {activeLogFlockId?.id === flock.id ? (
+                <div className="bg-slate-50 p-6 rounded-3xl border border-emerald-100 animate-in zoom-in-95 duration-200">
+                  <div className="flex justify-between items-center mb-6">
+                    <h5 className="font-black text-emerald-800 uppercase text-xs tracking-widest">
+                      {activeLogFlockId.type === 'weight' ? 'ওজন রেকর্ড' : 
+                       activeLogFlockId.type === 'mortality' ? 'মৃত্যু রেকর্ড' : 
+                       'খাদ্য রেকর্ড'}
+                    </h5>
+                    <button onClick={() => setActiveLogFlockId(null)} className="p-1 hover:bg-slate-200 rounded-full"><X size={16} /></button>
+                  </div>
+                  
+                  {activeLogFlockId.type === 'weight' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3">
+                        <input type="number" placeholder="ওজন (গ্রাম)" className="p-3 border rounded-xl text-sm font-bold" value={weightForm.averageWeight || ''} onChange={e => setWeightForm({...weightForm, averageWeight: parseInt(e.target.value) || 0})} />
+                        <input type="number" placeholder="নমুনা" className="p-3 border rounded-xl text-sm font-bold" value={weightForm.sampleSize || ''} onChange={e => setWeightForm({...weightForm, sampleSize: parseInt(e.target.value) || 0})} />
+                      </div>
+                      <button onClick={() => { onAddWeight(flock.id, weightForm); setActiveLogFlockId(null); setWeightForm({ averageWeight: 0, sampleSize: 10, date: new Date().toISOString().split('T')[0] }); }} className="w-full py-3 bg-emerald-600 text-white rounded-xl font-black text-sm shadow-lg shadow-emerald-100">ওজন সেভ করুন</button>
+                    </div>
+                  )}
+                  {activeLogFlockId.type === 'mortality' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3">
+                        <input type="number" placeholder="সংখ্যা" className="p-3 border rounded-xl text-sm font-bold" value={mortalityForm.count || ''} onChange={e => setMortalityForm({...mortalityForm, count: parseInt(e.target.value) || 0})} />
+                        <input type="date" className="p-3 border rounded-xl text-sm font-bold" value={mortalityForm.date} onChange={e => setMortalityForm({...mortalityForm, date: e.target.value})} />
+                      </div>
+                      <input type="text" placeholder="কারণ (ঐচ্ছিক)" className="w-full p-3 border rounded-xl text-sm font-bold" value={mortalityForm.reason} onChange={e => setMortalityForm({...mortalityForm, reason: e.target.value})} />
+                      <button onClick={() => { onAddMortality(flock.id, mortalityForm); setActiveLogFlockId(null); setMortalityForm({ count: 0, reason: '', date: new Date().toISOString().split('T')[0] }); }} className="w-full py-3 bg-rose-600 text-white rounded-xl font-black text-sm shadow-lg shadow-rose-100">মৃত্যু সেভ করুন</button>
+                    </div>
+                  )}
+                  {activeLogFlockId.type === 'feed' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3">
+                        <input type="number" placeholder="পরিমাণ" className="p-3 border rounded-xl text-sm font-bold" value={feedForm.amount || ''} onChange={e => setFeedForm({...feedForm, amount: parseFloat(e.target.value) || 0})} />
+                        <select className="p-3 border rounded-xl text-sm font-bold bg-white" value={feedForm.unit} onChange={e => setFeedForm({...feedForm, unit: e.target.value})}>
+                          <option value="ব্যাগ">ব্যাগ (Bag)</option>
+                          <option value="কেজি">কেজি (KG)</option>
+                          <option value="গ্রাম">গ্রাম (G)</option>
+                        </select>
+                      </div>
+                      <input type="date" className="w-full p-3 border rounded-xl text-sm font-bold" value={feedForm.date} onChange={e => setFeedForm({...feedForm, date: e.target.value})} />
+                      <button onClick={() => { onAddFeed(flock.id, feedForm); setActiveLogFlockId(null); setFeedForm({ amount: 0, unit: 'ব্যাগ', date: new Date().toISOString().split('T')[0] }); }} className="w-full py-3 bg-amber-500 text-white rounded-xl font-black text-sm shadow-lg shadow-amber-100">খাদ্য সেভ করুন</button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  <button onClick={() => setActiveLogFlockId({ id: flock.id, type: 'weight' })} className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-emerald-200 rounded-2xl hover:bg-emerald-50 transition-all group">
+                    <Scale size={20} className="text-emerald-500 mb-2 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] font-black text-emerald-700">ওজন</span>
+                  </button>
+                  <button onClick={() => setActiveLogFlockId({ id: flock.id, type: 'mortality' })} className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-rose-200 rounded-2xl hover:bg-rose-50 transition-all group">
+                    <Skull size={20} className="text-rose-500 mb-2 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] font-black text-rose-700">মৃত্যু</span>
+                  </button>
+                  <button onClick={() => setActiveLogFlockId({ id: flock.id, type: 'feed' })} className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-amber-200 rounded-2xl hover:bg-amber-50 transition-all group">
+                    <UtensilsCrossed size={20} className="text-amber-500 mb-2 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] font-black text-amber-700">খাদ্য</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {confirmDeleteId === flock.id && (
+              <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm z-20 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+                <AlertCircle size={48} className="text-rose-500 mb-4" />
+                <h5 className="text-white text-xl font-black mb-2">মুছে ফেলতে চান?</h5>
+                <p className="text-slate-400 text-sm mb-8">এই ব্যাচের সব তথ্য চিরতরে মুছে যাবে।</p>
+                <div className="flex gap-3 w-full max-w-xs">
+                  <button onClick={() => { onDelete(flock.id); setConfirmDeleteId(null); }} className="flex-1 bg-rose-600 text-white py-3 rounded-2xl font-bold">মুছে ফেলুন</button>
+                  <button onClick={() => setConfirmDeleteId(null)} className="flex-1 bg-slate-700 text-white py-3 rounded-2xl font-bold">বাতিল</button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        ))}
       </div>
     </div>
   );
 };
+
+const StatCard: React.FC<{ title: string, value: string, icon: React.ReactNode, highlight?: string }> = ({ title, value, icon, highlight }) => (
+  <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-start justify-between hover:shadow-md transition-shadow">
+    <div>
+      <p className="text-slate-500 text-[10px] font-black mb-1 uppercase tracking-widest">{title}</p>
+      <h4 className={`text-2xl font-black ${highlight || 'text-slate-900'}`}>{value}</h4>
+    </div>
+    <div className="p-4 bg-slate-50 rounded-2xl">{icon}</div>
+  </div>
+);
 
 const TransactionView: React.FC<{ farmData: FarmState, onAdd: (t: any) => void }> = ({ farmData, onAdd }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [newTx, setNewTx] = useState({ type: TransactionType.EXPENSE, category: Category.FEED, amount: 0, description: '', date: new Date().toISOString().split('T')[0] });
 
   return (
-    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in duration-500">
-      <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-        <h3 className="font-bold text-slate-800 flex items-center gap-2"><History size={20} className="text-emerald-600" /> আর্থিক খতিয়ান</h3>
-        <button onClick={() => setIsAdding(!isAdding)} className="px-5 py-2.5 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-all flex items-center gap-2 text-sm font-bold shadow-lg shadow-slate-100">{isAdding ? 'বাতিল' : <><Plus size={18} /> নতুন হিসাব</>}</button>
+    <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden animate-in fade-in duration-500 font-['Hind_Siliguri',_sans-serif]">
+      <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+        <h3 className="font-black text-slate-800 text-xl flex items-center gap-3"><History className="text-emerald-600" /> আর্থিক খতিয়ান</h3>
+        <button onClick={() => setIsAdding(!isAdding)} className="px-6 py-3 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition-all flex items-center gap-2 text-sm font-black shadow-lg shadow-slate-200">{isAdding ? 'বাতিল' : <><Plus size={18} /> নতুন হিসাব</>}</button>
       </div>
       {isAdding && (
-        <div className="p-6 bg-slate-50 border-b border-slate-100 grid grid-cols-1 md:grid-cols-5 gap-4 animate-in slide-in-from-top-2 duration-300">
-          <select value={newTx.type} onChange={(e) => setNewTx({...newTx, type: e.target.value as TransactionType})} className="p-3 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"><option value={TransactionType.INCOME}>আয়</option><option value={TransactionType.EXPENSE}>ব্যয়</option></select>
-          <select value={newTx.category} onChange={(e) => setNewTx({...newTx, category: e.target.value as Category})} className="p-3 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white">{Object.values(Category).map(c => <option key={c} value={c}>{CATEGORY_NAMES[c]}</option>)}</select>
-          <input type="number" placeholder="টাকার পরিমাণ" className="p-3 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white" value={newTx.amount || ''} onChange={(e) => setNewTx({...newTx, amount: Number(e.target.value)})} />
-          <input type="text" placeholder="বিবরণ" className="p-3 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white" value={newTx.description} onChange={(e) => setNewTx({...newTx, description: e.target.value})} />
-          <button disabled={!newTx.amount || !newTx.description} onClick={() => { onAdd(newTx); setIsAdding(false); setNewTx({ type: TransactionType.EXPENSE, category: Category.FEED, amount: 0, description: '', date: new Date().toISOString().split('T')[0] }); }} className="bg-emerald-600 text-white py-3 rounded-xl font-bold text-sm disabled:opacity-50 hover:bg-emerald-700 transition-all shadow-md">সেভ করুন</button>
+        <div className="p-8 bg-slate-50 border-b border-slate-100 grid grid-cols-1 md:grid-cols-5 gap-4 animate-in slide-in-from-top-2">
+          <select value={newTx.type} onChange={(e) => setNewTx({...newTx, type: e.target.value as any})} className="p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"><option value={TransactionType.INCOME}>আয়</option><option value={TransactionType.EXPENSE}>ব্যয়</option></select>
+          <select value={newTx.category} onChange={(e) => setNewTx({...newTx, category: e.target.value as any})} className="p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white">{Object.values(Category).map(c => <option key={c} value={c}>{CATEGORY_NAMES[c]}</option>)}</select>
+          <input type="number" placeholder="পরিমাণ" className="p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={newTx.amount || ''} onChange={(e) => setNewTx({...newTx, amount: Number(e.target.value)})} />
+          <input type="text" placeholder="বিবরণ" className="p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={newTx.description} onChange={(e) => setNewTx({...newTx, description: e.target.value})} />
+          <button onClick={() => { onAdd(newTx); setIsAdding(false); }} className="bg-emerald-600 text-white rounded-xl font-black py-3 shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all">সেভ করুন</button>
         </div>
       )}
       <div className="overflow-x-auto">
         <table className="w-full text-left">
-          <thead className="bg-slate-50 border-b border-slate-100 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-            <tr><th className="px-6 py-5">তারিখ</th><th className="px-6 py-5">বিভাগ</th><th className="px-6 py-5">বিবরণ</th><th className="px-6 py-5 text-right">পরিমাণ</th></tr>
+          <thead className="bg-slate-50 border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-widest">
+            <tr><th className="px-8 py-6">তারিখ</th><th className="px-8 py-6">বিভাগ</th><th className="px-8 py-6">বিবরণ</th><th className="px-8 py-6 text-right">পরিমাণ</th></tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-sm">
-            {farmData.transactions.length > 0 ? (
-              farmData.transactions.map(t => (
-                <tr key={t.id} className="hover:bg-slate-50/80 transition-all group">
-                  <td className="px-6 py-4 text-slate-500 font-bold">{t.date}</td>
-                  <td className="px-6 py-4"><span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase shadow-sm ${t.type === TransactionType.INCOME ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{CATEGORY_NAMES[t.category]}</span></td>
-                  <td className="px-6 py-4 text-slate-800 font-semibold">{t.description}</td>
-                  <td className={`px-6 py-4 text-right font-extrabold text-base ${t.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-rose-600'}`}>{t.type === TransactionType.INCOME ? '+' : '-'}৳{t.amount.toLocaleString()}</td>
-                </tr>
-              ))
-            ) : (
-              <tr><td colSpan={4} className="px-6 py-20 text-center text-slate-400 font-medium">কোনো লেনদেন পাওয়া যায়নি</td></tr>
+          <tbody className="divide-y divide-slate-100">
+            {farmData.transactions.map(t => (
+              <tr key={t.id} className="hover:bg-slate-50 transition-all">
+                <td className="px-8 py-5 text-slate-500 font-bold text-sm">{t.date}</td>
+                <td className="px-8 py-5"><span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter shadow-sm ${t.type === TransactionType.INCOME ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{CATEGORY_NAMES[t.category]}</span></td>
+                <td className="px-8 py-5 text-slate-800 font-bold text-sm">{t.description}</td>
+                <td className={`px-8 py-5 text-right font-black text-base ${t.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-rose-600'}`}>{t.type === TransactionType.INCOME ? '+' : '-'}৳{t.amount.toLocaleString()}</td>
+              </tr>
+            ))}
+            {farmData.transactions.length === 0 && (
+              <tr><td colSpan={4} className="px-8 py-20 text-center text-slate-400 font-black">কোনো লেনদেন রেকর্ড নেই</td></tr>
             )}
           </tbody>
         </table>
@@ -856,49 +1081,108 @@ const TransactionView: React.FC<{ farmData: FarmState, onAdd: (t: any) => void }
   );
 };
 
-const InventoryView: React.FC<{ farmData: FarmState, onAdd: (item: any) => void }> = ({ farmData, onAdd }) => {
+const InventoryView: React.FC<{ farmData: FarmState, onAdd: (item: any) => void, onUpdate: (id: string, item: any) => void, onDelete: (id: string) => void }> = ({ farmData, onAdd, onUpdate, onDelete }) => {
   const [isAdding, setIsAdding] = useState(false);
-  const [newItem, setNewItem] = useState({ name: '', category: Category.FEED, currentQuantity: 0, unit: 'ব্যাগ', minThreshold: 5 });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [formState, setFormState] = useState({ name: '', category: Category.FEED, currentQuantity: 0, unit: 'ব্যাগ', minThreshold: 5 });
+
+  const resetForm = () => {
+    setFormState({ name: '', category: Category.FEED, currentQuantity: 0, unit: 'ব্যাগ', minThreshold: 5 });
+    setIsAdding(false);
+    setEditingId(null);
+  };
+
+  const handleEdit = (item: InventoryItem) => {
+    setFormState({ ...item });
+    setEditingId(item.id);
+    setIsAdding(true);
+  };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500 font-['Hind_Siliguri',_sans-serif]">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-bold text-slate-800">রিসোর্স স্টক</h3>
-        <button onClick={() => setIsAdding(!isAdding)} className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 text-sm font-bold shadow-lg shadow-emerald-50">{isAdding ? 'বাতিল' : <><Plus size={18} /> নতুন আইটেম</>}</button>
+        <h3 className="text-lg font-bold text-slate-800">স্টক ও ইনভেন্টরি</h3>
+        <button onClick={() => { if (isAdding) resetForm(); else setIsAdding(true); }} className="px-6 py-2 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-50 hover:bg-emerald-700 transition-all">
+          {isAdding ? 'বাতিল' : <><Plus size={18} /> নতুন আইটেম</>}
+        </button>
       </div>
+
       {isAdding && (
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-lg animate-in slide-in-from-top-2">
-          <h4 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Package size={20} className="text-emerald-600" />পণ্যের তথ্য দিন</h4>
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl animate-in slide-in-from-top-2">
+          <h4 className="font-black text-slate-800 mb-6 flex items-center gap-3">
+            {editingId ? <Edit2 className="text-emerald-600" /> : <Package className="text-emerald-600" />}
+            {editingId ? 'আইটেম এডিট করুন' : 'রিসোর্স তথ্য'}
+          </h4>
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            <input type="text" placeholder="পণ্যের নাম" className="p-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={newItem.name} onChange={(e) => setNewItem({...newItem, name: e.target.value})} />
-            <select className="p-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={newItem.category} onChange={(e) => setNewItem({...newItem, category: e.target.value as Category.FEED | Category.MEDICINE})}><option value={Category.FEED}>খাদ্য (ফিড)</option><option value={Category.MEDICINE}>ওষুধ</option></select>
-            <input type="number" placeholder="বর্তমান পরিমাণ" className="p-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={newItem.currentQuantity || ''} onChange={(e) => setNewItem({...newItem, currentQuantity: parseInt(e.target.value) || 0})} />
-            <input type="text" placeholder="একক (ব্যাগ/বোতল)" className="p-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={newItem.unit} onChange={(e) => setNewItem({...newItem, unit: e.target.value})} />
-            <input type="number" placeholder="সর্বনিম্ন সীমা" className="p-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={newItem.minThreshold || ''} onChange={(e) => setNewItem({...newItem, minThreshold: parseInt(e.target.value) || 0})} />
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">নাম</label>
+              <input type="text" placeholder="আইটেম নাম" className="w-full p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={formState.name} onChange={e => setFormState({...formState, name: e.target.value})} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">বিভাগ</label>
+              <select className="w-full p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white" value={formState.category} onChange={e => setFormState({...formState, category: e.target.value as any})}><option value={Category.FEED}>ফিড</option><option value={Category.MEDICINE}>ওষুধ</option></select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">বর্তমান পরিমাণ</label>
+              <input type="number" placeholder="বর্তমান পরিমাণ" className="w-full p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={formState.currentQuantity || ''} onChange={e => setFormState({...formState, currentQuantity: parseInt(e.target.value) || 0})} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">একক</label>
+              <input type="text" placeholder="একক (ব্যাগ/বোতল)" className="w-full p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={formState.unit} onChange={e => setFormState({...formState, unit: e.target.value})} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">সীমা</label>
+              <input type="number" placeholder="মিনিমাম সীমা" className="w-full p-3 border rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={formState.minThreshold || ''} onChange={e => setFormState({...formState, minThreshold: parseInt(e.target.value) || 0})} />
+            </div>
           </div>
-          <button disabled={!newItem.name} onClick={() => { onAdd(newItem); setIsAdding(false); setNewItem({ name: '', category: Category.FEED, currentQuantity: 0, unit: 'ব্যাগ', minThreshold: 5 }); }} className="mt-6 px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold disabled:opacity-50 hover:bg-emerald-700 transition-all shadow-md">আইটেম যোগ করুন</button>
+          <div className="mt-8 flex gap-3">
+            <button onClick={() => { if (editingId) onUpdate(editingId, formState); else onAdd(formState); resetForm(); }} className="px-8 py-3 bg-emerald-600 text-white rounded-xl font-black shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center gap-2">
+              <Check size={18} /> সংরক্ষণ করুন
+            </button>
+            <button onClick={resetForm} className="px-8 py-3 bg-slate-100 text-slate-600 rounded-xl font-black">বাতিল</button>
+          </div>
         </div>
       )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {farmData.inventory.length > 0 ? (
-          farmData.inventory.map(item => (
-            <div key={item.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-              {item.currentQuantity < item.minThreshold && ( <div className="absolute top-0 right-0 p-2.5 bg-rose-500 text-white shadow-lg rounded-bl-2xl animate-pulse"><AlertTriangle size={18} /></div> )}
-              <p className="text-slate-400 text-[10px] font-extrabold uppercase mb-2 tracking-[0.2em]">{CATEGORY_NAMES[item.category as Category] || item.category}</p>
-              <h4 className="font-extrabold text-slate-800 mb-6 text-xl">{item.name}</h4>
-              <div className="flex items-end justify-between mb-4">
-                <div><p className="text-4xl font-black text-slate-900 leading-none">{item.currentQuantity}</p><p className="text-slate-400 text-xs font-bold uppercase mt-1 tracking-widest">{item.unit}</p></div>
-                <div className="text-right"><p className="text-[9px] text-slate-400 mb-1 uppercase tracking-tighter font-black">মিনিমাম সীমা</p><p className="text-sm font-black text-slate-700 bg-slate-100 px-3 py-1 rounded-full">{item.minThreshold} {item.unit}</p></div>
-              </div>
-              <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden shadow-inner">
-                <div className={`h-full rounded-full transition-all duration-1000 ease-out ${item.currentQuantity < item.minThreshold ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (item.currentQuantity / (item.minThreshold * 2)) * 100)}%` }}></div>
-              </div>
+        {farmData.inventory.map(item => (
+          <div key={item.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-xl transition-all">
+            <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button onClick={() => handleEdit(item)} className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors"><Edit2 size={16} /></button>
+              <button onClick={() => setConfirmDeleteId(item.id)} className="p-2 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /></button>
             </div>
-          ))
-        ) : (
-          <div className="col-span-full py-32 text-center bg-white rounded-[2rem] border-2 border-dashed border-slate-200 shadow-inner">
-             <Package size={64} className="mx-auto text-slate-200 mb-4" />
-             <p className="text-slate-500 font-bold text-lg">ইনভেন্টরি খালি</p>
+
+            {Number(item.currentQuantity) < Number(item.minThreshold) && (
+              <div className="absolute top-0 left-0 px-4 py-2 bg-rose-500 text-white text-[10px] font-black uppercase tracking-widest rounded-br-2xl animate-pulse">Low Stock</div>
+            )}
+            
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 mt-4">{CATEGORY_NAMES[item.category as Category] || item.category}</p>
+            <h4 className="text-2xl font-black text-slate-800 mb-6">{item.name}</h4>
+            <div className="flex justify-between items-end">
+              <div><p className="text-4xl font-black text-slate-900">{item.currentQuantity}</p><p className="text-xs font-bold text-slate-400 mt-1 uppercase">{item.unit}</p></div>
+              <div className="text-right opacity-60"><p className="text-[9px] font-black uppercase mb-1">সতর্কতা সীমা</p><p className="text-sm font-black text-slate-700">{item.minThreshold} {item.unit}</p></div>
+            </div>
+            <div className="mt-8 h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div className={`h-full rounded-full transition-all duration-1000 ${Number(item.currentQuantity) < Number(item.minThreshold) ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (Number(item.currentQuantity) / (Number(item.minThreshold) * 2)) * 100)}%` }}></div>
+            </div>
+
+            {confirmDeleteId === item.id && (
+              <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-sm z-20 flex flex-col items-center justify-center p-8 text-center animate-in fade-in">
+                <AlertCircle size={32} className="text-rose-500 mb-4" />
+                <h5 className="text-white font-black mb-6">আইটেমটি কি নিশ্চিতভাবে মুছে ফেলতে চান?</h5>
+                <div className="flex gap-2 w-full">
+                  <button onClick={() => { onDelete(item.id); setConfirmDeleteId(null); }} className="flex-1 bg-rose-600 text-white py-2 rounded-xl text-sm font-bold">মুছুন</button>
+                  <button onClick={() => setConfirmDeleteId(null)} className="flex-1 bg-slate-700 text-white py-2 rounded-xl text-sm font-bold">বাতিল</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        {farmData.inventory.length === 0 && (
+          <div className="col-span-full py-20 text-center opacity-30 border-2 border-dashed border-slate-300 rounded-[2.5rem]">
+            <Package size={48} className="mx-auto mb-4" />
+            <p className="font-black">কোনো ইনভেন্টরি আইটেম নেই</p>
           </div>
         )}
       </div>
@@ -908,45 +1192,45 @@ const InventoryView: React.FC<{ farmData: FarmState, onAdd: (item: any) => void 
 
 const AiView: React.FC<{ loading: boolean, insights: any, onFetch: () => void }> = ({ loading, insights, onFetch }) => (
   <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-700">
-    <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-10 rounded-[2.5rem] text-white shadow-2xl shadow-emerald-200/50 relative overflow-hidden group">
-      <div className="absolute top-0 right-0 w-80 h-80 bg-white/10 rounded-full blur-3xl -mr-32 -mt-32 group-hover:scale-110 transition-transform duration-700"></div>
-      <div className="absolute bottom-0 left-0 w-40 h-40 bg-black/5 rounded-full blur-2xl -ml-20 -mb-20"></div>
+    <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-12 rounded-[3rem] text-white shadow-2xl relative overflow-hidden group">
+      <div className="absolute top-0 right-0 w-80 h-80 bg-white/10 rounded-full blur-3xl -mr-32 -mt-32"></div>
       <div className="relative z-10">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-md">
-            <BrainCircuit size={40} className="animate-pulse" />
-          </div>
-          <div>
-            <h3 className="text-4xl font-black tracking-tight">HenGPT উপদেষ্টা</h3>
-            <p className="text-emerald-100 text-sm font-bold uppercase tracking-widest mt-1">AI Driven Poultry Management</p>
-          </div>
+        <div className="flex items-center gap-4 mb-8">
+          <div className="p-4 bg-white/20 rounded-2xl backdrop-blur-md"><BrainCircuit size={48} className="animate-pulse" /></div>
+          <div><h3 className="text-4xl font-black">HenGPT উপদেষ্টা</h3><p className="text-emerald-100 text-xs font-bold uppercase tracking-widest">AI Strategic Poultry Guide</p></div>
         </div>
-        <p className="text-emerald-50 mb-10 max-w-lg font-medium leading-relaxed text-xl">Gemini 3 দ্বারা চালিত, আপনার পালের ওজনের প্রবণতা এবং ব্যয়ের হিসাব বিশ্লেষণ করে আপনাকে বিশেষজ্ঞ পরামর্শ প্রদান করবে।</p>
-        <button onClick={onFetch} disabled={loading} className="px-10 py-4 bg-white text-emerald-700 rounded-2xl font-black hover:bg-emerald-50 transition-all flex items-center gap-3 disabled:opacity-50 text-base shadow-xl hover:shadow-2xl hover:-translate-y-1">
-          {loading ? <Loader2 className="animate-spin" size={24} /> : <BrainCircuit size={24} />}
-          {loading ? 'ডেটা বিশ্লেষণ করা হচ্ছে...' : 'এআই পরামর্শ জেনারেট করুন'}
+        <p className="text-emerald-50 mb-12 max-w-lg text-lg font-medium leading-relaxed">আপনার খামারের প্রতিটি ডেটা পয়েন্ট বিশ্লেষণ করে আমরা আপনার মুনাফা বৃদ্ধিতে সহায়তা করি।</p>
+        <button onClick={onFetch} disabled={loading} className="px-12 py-4 bg-white text-emerald-700 rounded-2xl font-black flex items-center gap-3 hover:scale-105 active:scale-95 transition-all shadow-xl disabled:opacity-50">
+          {loading ? <Loader2 className="animate-spin" /> : <BrainCircuit />}
+          {loading ? 'বিশ্লেষণ চলছে...' : 'পরামর্শ জেনারেট করুন'}
         </button>
       </div>
     </div>
+    
     {insights && (
-      <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 space-y-8">
-        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-          <h4 className="font-black text-slate-800 mb-4 flex items-center gap-3 text-2xl"><TrendingUp size={24} className="text-emerald-500" />সারসংক্ষেপ</h4>
-          <p className="text-slate-600 leading-relaxed font-semibold text-lg">{insights.summary}</p>
+      <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-8">
+        <div className="bg-white p-10 rounded-[2.5rem] border border-slate-200 shadow-sm">
+          <h4 className="font-black text-slate-800 mb-6 flex items-center gap-3 text-2xl"><TrendingUp className="text-emerald-500" /> সারসংক্ষেপ</h4>
+          <p className="text-slate-600 leading-relaxed font-bold text-lg">{insights.summary}</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="bg-rose-50 p-8 rounded-3xl border border-rose-100 shadow-sm">
-            <h4 className="font-black text-rose-800 mb-6 flex items-center gap-3 text-xl"><AlertTriangle size={24} />সতর্কতা ও ঝুঁকি</h4>
-            <ul className="space-y-4">{insights.warnings.map((w: string, i: number) => (<li key={i} className="flex gap-4 text-base text-rose-700 font-bold leading-tight animate-in slide-in-from-left-4" style={{ animationDelay: `${i * 100}ms` }}><div className="shrink-0 w-6 h-6 bg-rose-200 rounded-full flex items-center justify-center text-[10px]">!</div>{w}</li>))}</ul>
+          <div className="bg-rose-50 p-10 rounded-[2.5rem] border border-rose-100">
+            <h4 className="font-black text-rose-800 mb-6 flex items-center gap-3 text-xl"><AlertTriangle /> ঝুঁকি ও সতর্কতা</h4>
+            <ul className="space-y-4">{insights.warnings.map((w: string, i: number) => (<li key={i} className="flex gap-4 text-rose-700 font-bold leading-tight"><div className="w-2 h-2 rounded-full bg-rose-400 mt-2 shrink-0" />{w}</li>))}</ul>
           </div>
-          <div className="bg-emerald-50 p-8 rounded-3xl border border-emerald-100 shadow-sm">
-            <h4 className="font-black text-emerald-800 mb-6 flex items-center gap-3 text-xl"><TrendingUp size={24} />প্রয়োজনীয় পরামর্শ</h4>
-            <ul className="space-y-4">{insights.recommendations.map((r: string, i: number) => (<li key={i} className="flex gap-4 text-base text-emerald-700 font-bold leading-tight animate-in slide-in-from-right-4" style={{ animationDelay: `${i * 100}ms` }}><Check size={20} className="shrink-0 mt-0.5 text-emerald-600" />{r}</li>))}</ul>
+          <div className="bg-emerald-50 p-10 rounded-[2.5rem] border border-emerald-100">
+            <h4 className="font-black text-emerald-800 mb-6 flex items-center gap-3 text-xl"><Check /> প্রয়োজনীয় পদক্ষেপ</h4>
+            <ul className="space-y-4">{insights.recommendations.map((r: string, i: number) => (<li key={i} className="flex gap-4 text-emerald-700 font-bold leading-tight"><Check className="text-emerald-500 shrink-0" />{r}</li>))}</ul>
           </div>
         </div>
       </div>
     )}
-    {!insights && !loading && ( <div className="text-center py-32 border-2 border-dashed border-slate-200 rounded-[3rem] bg-white shadow-inner"><BrainCircuit size={64} className="mx-auto text-slate-100 mb-6" /><h4 className="text-slate-800 font-black text-2xl mb-2">বিশ্লেষণের জন্য প্রস্তুত</h4><p className="text-slate-400 text-base font-bold">আপনার এআই-চালিত পর্যালোচনার জন্য উপরের বাটনে ক্লিক করুন।</p></div> )}
+    {!insights && !loading && (
+      <div className="text-center py-40 border-2 border-dashed border-slate-200 rounded-[3rem] bg-white opacity-40">
+        <BrainCircuit size={64} className="mx-auto mb-6 text-slate-300" />
+        <p className="text-xl font-black text-slate-400">বিশ্লেষণের জন্য ডেটা প্রস্তুত</p>
+      </div>
+    )}
   </div>
 );
 

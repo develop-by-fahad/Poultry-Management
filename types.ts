@@ -25,6 +25,13 @@ export interface Transaction {
   unit?: string;
 }
 
+export interface FeedLog {
+  id: string;
+  date: string;
+  amount: number;
+  unit: string;
+}
+
 export interface FlockRecord {
   id: string;
   batchName: string;
@@ -34,6 +41,7 @@ export interface FlockRecord {
   breed: string;
   weightLogs: WeightLog[];
   mortalityLogs: MortalityLog[];
+  feedLogs: FeedLog[];
 }
 
 export interface WeightLog {
